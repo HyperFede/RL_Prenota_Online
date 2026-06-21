@@ -30,11 +30,12 @@ class Appointment:
 
 
 class SearchPreferences:
-    def __init__(self, provincia, start_date, end_date, refresh_frequency):
-        self.provincia = provincia
+    def __init__(self, province, start_date, end_date, refresh_frequency, dry_run=True):
+        self.province = province
         self.start_date = start_date
         self.end_date = end_date
         self.refresh_frequency = refresh_frequency
+        self.dry_run = dry_run
     
     def get_start_date_input(self):
         return ''.join(filter(str.isdigit, self.start_date))
