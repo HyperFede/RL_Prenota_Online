@@ -5,9 +5,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.parse import urlsplit
 
-ACCEPT = "accept"
-REJECT = "reject"
+from rlprenota.core.decisions import ACCEPT, REJECT
 
 ACCEPT_REACTIONS = {"👍", "👌", "🔥", "❤", "❤️"}
 REJECT_REACTIONS = {"👎", "💩", "🤮"}
@@ -35,12 +35,15 @@ class TelegramBot:
     """
 
     def __init__(self, token, chat_id, api_url="https://api.telegram.org"):
+        parts = urlsplit(api_url)
+        # Only HTTPS, except a local fake server in tests
+        if not (parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost"))):
+            raise ValueError("L'API di Telegram deve usare HTTPS")
         self.api_url = api_url.rstrip("/")
         self.token = (token or "").strip()
         self.chat_id = str(chat_id or "").strip()
         self.offset = None
         self._context = _ssl_context()
-        self._insecure_warning_shown = False
 
     @property
     def enabled(self):
@@ -51,7 +54,8 @@ class TelegramBot:
         data = json.dumps(params or {}).encode("utf-8")
         request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=timeout, context=self._context) as response:
+            # The URL scheme is validated in __init__ (HTTPS only)
+            with urllib.request.urlopen(request, timeout=timeout, context=self._context) as response:  # nosec B310
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             try:
@@ -59,13 +63,10 @@ class TelegramBot:
             except ValueError:
                 raise TelegramError(f"HTTP {e.code}") from None
         except urllib.error.URLError as e:
-            if isinstance(e.reason, ssl.SSLCertVerificationError) and not self._insecure_warning_shown:
-                # Some networks/antivirus intercept TLS: keep working like the previous version did, but say so
-                print("Attenzione: certificato TLS di api.telegram.org non verificabile su questa rete. "
-                      "Proseguo senza verifica (installa 'certifi' o i certificati di Python per evitarlo).")
-                self._insecure_warning_shown = True
-                self._context = ssl._create_unverified_context()
-                return self._call(method, params, timeout)
+            if isinstance(e.reason, ssl.SSLCertVerificationError):
+                # Never fall back to an unverified connection: the bot token and health data travel on it
+                raise TelegramError("certificato TLS di api.telegram.org non verificabile: installa 'certifi' "
+                                    "o i certificati di Python (oppure la rete sta intercettando il traffico)") from None
             raise TelegramError(str(e.reason)) from None
         if not payload.get("ok"):
             raise TelegramError(payload.get("description", "risposta non valida"))

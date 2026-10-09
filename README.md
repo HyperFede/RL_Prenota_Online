@@ -48,8 +48,23 @@ Le scelte sono salvate nel file `stato_ricerca.json` (per ricetta, senza salvarn
 
 Per provare il bot: `py telegram_bot.py` (legge token e chat id da `data_file.py`) invia un messaggio di prova con i pulsanti.
 
-## Test
+## Filtri aggiuntivi (`data_file.py`)
+- `modalita_luogo = "radius"`: cerca entro `distanza_massima_km` dal tuo `comune_di_partenza` (le distanze sono calcolate sul computer, con le coordinate dei comuni lombardi da OpenStreetMap; nessun indirizzo viene inviato a terzi).
+- `modalita_luogo = "facilities"`: solo nelle `strutture` indicate (basta una parte del nome, es. "Niguarda").
+- `giorni_settimana`, `orario_da`, `orario_a`: solo nei giorni e nella fascia oraria indicati. Giorni e mattina/pomeriggio vengono impostati anche nel modulo del portale, così la ricerca è più veloce.
+
+## Per sviluppatori
+Il codice è nel pacchetto `rlprenota/`:
+- `core/portal.py`: i passaggi Selenium sul portale;
+- `core/runner.py`: il ciclo di ricerca;
+- `core/deciders.py`: come viene chiesta la conferma (Telegram o terminale);
+- `core/filters.py` e `geo/`: i filtri;
+- `core/errors.py` e `core/redact.py`: la classificazione degli errori e il mascheramento dei dati personali nei log.
+
+`main.py` è la versione da riga di comando.
+
 ```
-py -m unittest discover tests
+pip install -r requirements-dev.txt
+pytest
 ```
-I test usano un finto server Telegram e una copia semplificata della pagina dei risultati del portale (serve Chrome).
+I test usano un finto server Telegram e copie semplificate delle pagine del portale (serve Chrome). La tabella dei comuni si rigenera con `python scripts/build_comuni.py` (dati © OpenStreetMap contributors, licenza ODbL).

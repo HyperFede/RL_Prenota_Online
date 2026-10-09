@@ -3,9 +3,13 @@ import json
 import os
 import time
 
-from dataObjects import Slot
+from rlprenota.core.models import Slot
 
 DEFAULT_STATE_FILE = "stato_ricerca.json"
+
+# User answers
+ACCEPT = "accept"
+REJECT = "reject"
 
 # Proposal statuses
 PENDING = "pending"      # sent to the user, waiting for an answer
