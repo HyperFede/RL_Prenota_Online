@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card narrow">
+  <h1>Conferma la tua identità</h1>
+  <p>Per modificare codice fiscale, tessera sanitaria, ricetta o recapiti serve una conferma su Telegram
+     (le modifiche non sono state salvate).</p>
+  <form method="post" action="{{ base }}/confirm">
+    <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button>Invia la richiesta su Telegram</button>
+  </form>
+</section>
+{% endblock %}

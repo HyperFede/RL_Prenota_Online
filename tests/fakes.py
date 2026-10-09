@@ -14,12 +14,14 @@ class FakeTelegram:
     def __init__(self, answers=None):
         self.answers = list(answers or [])
         self.sent = []       # (message_id, text, has_buttons)
+        self.requests = []   # (method, body) of every call, for multi-chat assertions
         self.edits = []      # (message_id, text, has_buttons)
         self.callbacks_answered = []
         self.pending_updates = []
         self._next_message_id = 100
         self._next_update_id = 1
         self._lock = threading.Lock()
+        self._closed = False
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -42,7 +44,10 @@ class FakeTelegram:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def close(self):
-        self.server.shutdown()
+        if not self._closed:
+            self._closed = True
+            self.server.shutdown()
+            self.server.server_close()
 
     def add_update(self, update):
         with self._lock:
@@ -54,7 +59,19 @@ class FakeTelegram:
         self.add_update({"callback_query": {"id": f"cb{message_id}", "data": data,
                                             "message": {"message_id": message_id, "chat": {"id": int(chat_id)}}}})
 
+    def user_message(self, chat_id, text, username=None, reply_to=None):
+        message = {"message_id": 1, "chat": {"id": int(chat_id)}, "from": {"id": int(chat_id)}, "text": text}
+        if username:
+            message["from"]["username"] = username
+        if reply_to:
+            message["reply_to_message"] = {"message_id": reply_to}
+        self.add_update({"message": message})
+
+    def sent_to(self, chat_id):
+        return [body for method, body in self.requests if method == "sendMessage" and str(body["chat_id"]) == str(chat_id)]
+
     def handle(self, method, body):
+        self.requests.append((method, body))
         if method == "sendMessage":
             with self._lock:
                 message_id = self._next_message_id

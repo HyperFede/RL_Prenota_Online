@@ -68,20 +68,23 @@ class TelegramBot:
                 raise TelegramError("certificato TLS di api.telegram.org non verificabile: installa 'certifi' "
                                     "o i certificati di Python (oppure la rete sta intercettando il traffico)") from None
             raise TelegramError(str(e.reason)) from None
+        except (OSError, ValueError) as e:
+            # Read timeouts, dropped connections, invalid JSON: the caller only needs to know Telegram failed
+            raise TelegramError(f"{type(e).__name__}: {e}") from None
         if not payload.get("ok"):
             raise TelegramError(payload.get("description", "risposta non valida"))
         return payload["result"]
 
     # --- sending ---
 
-    def send(self, text, buttons=None):
-        params = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
+    def send(self, text, buttons=None, chat_id=None):
+        params = {"chat_id": chat_id or self.chat_id, "text": text, "disable_web_page_preview": True}
         if buttons:
             params["reply_markup"] = {"inline_keyboard": buttons}
         return self._call("sendMessage", params)["message_id"]
 
-    def edit(self, message_id, text, buttons=None):
-        params = {"chat_id": self.chat_id, "message_id": message_id, "text": text, "disable_web_page_preview": True}
+    def edit(self, message_id, text, buttons=None, chat_id=None):
+        params = {"chat_id": chat_id or self.chat_id, "message_id": message_id, "text": text, "disable_web_page_preview": True}
         # Without reply_markup Telegram removes the buttons
         if buttons:
             params["reply_markup"] = {"inline_keyboard": buttons}
@@ -108,66 +111,35 @@ class TelegramBot:
 
     # --- receiving ---
 
-    def _is_our_chat(self, chat):
-        return str((chat or {}).get("id")) == self.chat_id
-
     def poll(self, timeout=0):
         """Return the decisions received since the last call.
 
         Each decision is a dict: {"decision": ACCEPT|REJECT, "slot_id": ...} for button presses,
         or {"decision": ..., "message_id": ...} for reactions / text replies (the caller maps the message to a slot).
         """
-        params = {"timeout": int(timeout), "allowed_updates": ["message", "callback_query", "message_reaction"]}
-        if self.offset is not None:
-            params["offset"] = self.offset
-        updates = self._call("getUpdates", params, timeout=timeout + 15)
-
         decisions = []
-        for update in updates:
-            self.offset = update["update_id"] + 1
+        for update in self.get_updates(timeout):
             decision = self._parse_update(update)
             if decision:
                 decisions.append(decision)
         return decisions
 
+    def get_updates(self, timeout=0):
+        """Raw updates since the last call (the offset is advanced, so nothing is delivered twice)."""
+        params = {"timeout": int(timeout), "allowed_updates": ["message", "callback_query", "message_reaction"]}
+        if self.offset is not None:
+            params["offset"] = self.offset
+        updates = self._call("getUpdates", params, timeout=timeout + 15)
+        if updates:
+            self.offset = updates[-1]["update_id"] + 1
+        return updates
+
     def _parse_update(self, update):
-        if "callback_query" in update:
-            query = update["callback_query"]
-            message = query.get("message") or {}
-            if not self._is_our_chat(message.get("chat")):
-                return None
-            data = query.get("data") or ""
-            kind, _, slot_id = data.partition(":")
-            decision = {"a": ACCEPT, "r": REJECT}.get(kind)
-            if not decision or not slot_id:
-                return None
-            return {"decision": decision, "slot_id": slot_id, "message_id": message.get("message_id"),
-                    "callback_id": query.get("id")}
-
-        if "message_reaction" in update:
-            reaction = update["message_reaction"]
-            if not self._is_our_chat(reaction.get("chat")):
-                return None
-            emojis = {r.get("emoji") for r in reaction.get("new_reaction", []) if r.get("type") == "emoji"}
-            if emojis & REJECT_REACTIONS:
-                decision = REJECT
-            elif emojis & ACCEPT_REACTIONS:
-                decision = ACCEPT
-            else:
-                return None
-            return {"decision": decision, "message_id": reaction.get("message_id")}
-
-        if "message" in update:
-            message = update["message"]
-            reply_to = message.get("reply_to_message")
-            if not reply_to or not self._is_our_chat(message.get("chat")):
-                return None
-            word = (message.get("text") or "").strip().lower().strip("!.")
-            decision = ACCEPT if word in ACCEPT_WORDS else REJECT if word in REJECT_WORDS else None
-            if not decision:
-                return None
-            return {"decision": decision, "message_id": reply_to.get("message_id")}
-        return None
+        """Decision from the configured chat only (single-user command line)."""
+        parsed = parse_update(update)
+        if not parsed or str(parsed.get("chat_id")) != self.chat_id or parsed.get("kind") != "decision":
+            return None
+        return parsed
 
     def answer_callback(self, callback_id, text):
         if not callback_id:
@@ -176,6 +148,55 @@ class TelegramBot:
             self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
         except TelegramError:
             pass  # only cosmetic (stops the loading spinner on the button)
+
+
+def parse_update(update):
+    """Normalize a raw update.
+
+    Returns one of:
+      {"kind": "decision", "decision": ACCEPT|REJECT, "chat_id", "message_id", optional "slot_id"/"data"/"callback_id"}
+      {"kind": "callback", "data", "chat_id", "message_id", "callback_id"}   (other buttons, e.g. login approval)
+      {"kind": "text", "text", "chat_id", "username"}                       (plain messages, e.g. /start <token>)
+    or None for anything else.
+    """
+    if "callback_query" in update:
+        query = update["callback_query"]
+        message = query.get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        data = query.get("data") or ""
+        base = {"chat_id": chat_id, "message_id": message.get("message_id"), "callback_id": query.get("id"), "data": data}
+        kind, _, rest = data.partition(":")
+        decision = {"a": ACCEPT, "r": REJECT}.get(kind)
+        if decision and rest:
+            slot_id = rest.rsplit(":", 1)[-1]
+            return {**base, "kind": "decision", "decision": decision, "slot_id": slot_id}
+        return {**base, "kind": "callback"}
+
+    if "message_reaction" in update:
+        reaction = update["message_reaction"]
+        emojis = {r.get("emoji") for r in reaction.get("new_reaction", []) if r.get("type") == "emoji"}
+        if emojis & REJECT_REACTIONS:
+            decision = REJECT
+        elif emojis & ACCEPT_REACTIONS:
+            decision = ACCEPT
+        else:
+            return None
+        return {"kind": "decision", "decision": decision, "chat_id": (reaction.get("chat") or {}).get("id"),
+                "message_id": reaction.get("message_id")}
+
+    if "message" in update:
+        message = update["message"]
+        chat_id = (message.get("chat") or {}).get("id")
+        text = (message.get("text") or "").strip()
+        reply_to = message.get("reply_to_message")
+        if reply_to:
+            word = text.lower().strip("!.")
+            decision = ACCEPT if word in ACCEPT_WORDS else REJECT if word in REJECT_WORDS else None
+            if decision:
+                return {"kind": "decision", "decision": decision, "chat_id": chat_id, "message_id": reply_to.get("message_id")}
+        return {"kind": "text", "text": text[:200], "chat_id": chat_id,
+                "username": (message.get("from") or {}).get("username")}
+    return None
 
 
 if __name__ == "__main__":

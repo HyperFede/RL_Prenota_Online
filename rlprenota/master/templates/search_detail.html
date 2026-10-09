@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block title %}{{ s.settings.label }} · RL Prenota Online{% endblock %}
+{% block content %}
+<h1>{{ s.settings.label }}</h1>
+<p><span class="status status-{{ s.status }}">{{ status_labels.get(s.status, s.status) }}</span>
+   {% if s.settings.dry_run %}<span class="status">Solo prova (dry run)</span>{% endif %}</p>
+
+<section class="card">
+  <dl class="facts">
+    {% if s.current_appointment %}<dt>Appuntamento attuale</dt><dd>{{ s.current_appointment }}</dd>{% endif %}
+    <dt>Ultimo controllo</dt><dd>{{ s.last_run_at | when }}</dd>
+    {% if s.status in ("active", "waiting") %}<dt>Prossimo controllo</dt><dd>{{ s.next_run_at | when }}
+      {% if s.effective_interval and s.effective_interval > s.settings.refresh_seconds + 30 %}
+        <span class="muted">(servizio occupato: un controllo ogni {{ (s.effective_interval / 60) | round | int }} min circa)</span>{% endif %}</dd>{% endif %}
+    {% if s.last_result %}<dt>Esito</dt><dd>{{ s.last_result }}</dd>{% endif %}
+    <dt>Dove</dt><dd>
+      {% if s.settings.location_mode == "radius" %}Entro {{ s.settings.max_km }} km da {{ s.settings.home_comune }}
+      {% elif s.settings.location_mode == "facilities" %}{% for f in s.settings.facilities %}{{ f.name }}{% if f.province %} ({{ f.province }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
+      {% else %}{{ s.settings.province | join(", ") }}{% endif %}</dd>
+    <dt>Quando</dt><dd>
+      {% if s.settings.start_date %}dal {{ s.settings.start_date | itdate }} {% endif %}{% if s.settings.end_date %}entro il {{ s.settings.end_date | itdate }}{% endif %}
+      {% if s.settings.weekdays %}· {% for d in s.settings.weekdays %}{{ weekdays[d] }}{% if not loop.last %} {% endif %}{% endfor %}{% endif %}
+      {% if s.settings.time_from or s.settings.time_to %}· {{ s.settings.time_from or "00:00" }}–{{ s.settings.time_to or "23:59" }}{% endif %}</dd>
+    {% if s.has_secrets %}
+    <dt>Codice fiscale</dt><dd>{{ s.masked.codice_fiscale }}</dd>
+    <dt>Ricetta</dt><dd>{{ s.masked.ricetta }}</dd>
+    {% else %}<dt>Dati personali</dt><dd>cancellati (ricerca conclusa)</dd>{% endif %}
+  </dl>
+  <div class="actions">
+    {% if s.status in ("active", "waiting") %}
+      <form method="post" action="{{ base }}/searches/{{ s.id }}/pause"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="secondary">Metti in pausa</button></form>
+    {% elif s.has_secrets %}
+      <form method="post" action="{{ base }}/searches/{{ s.id }}/resume"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button>Riprendi</button></form>
+    {% endif %}
+    {% if s.has_secrets %}<a class="button secondary" href="{{ base }}/searches/{{ s.id }}/edit">Modifica</a>{% endif %}
+    <form method="post" action="{{ base }}/searches/{{ s.id }}/delete"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="danger">Elimina</button></form>
+  </div>
+</section>
+
+{% if proposals %}
+<section class="card">
+  <h2>Ultime proposte</h2>
+  <ul>{% for p in proposals %}<li>{{ p.slot.when }} · {{ p.slot.sede or p.slot.azienda }} ({{ p.slot.comune }}) — {{ p.status }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if discarded %}
+<section class="card">
+  <h2>Appuntamenti scartati</h2>
+  <p class="muted">Non ti verranno più proposti. Puoi ripristinarli se hai cambiato idea.</p>
+  <ul>
+  {% for d in discarded %}
+    <li>{{ d.slot.when }} · {{ d.slot.sede or d.slot.azienda }} ({{ d.slot.comune }})
+      <form method="post" action="{{ base }}/searches/{{ s.id }}/undiscard/{{ d.slot_id }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="link">ripristina</button>
+      </form></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

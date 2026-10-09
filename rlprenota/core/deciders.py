@@ -148,7 +148,7 @@ def apply_late_answer(session, slot_id, decision, decider, acknowledge=lambda te
         log.info(f"-> Proposta {slot_id} scartata in ritardo, non verrà più proposta.")
     else:
         # The user wants it after all: book it as soon as it shows up again (if still better than the current one)
-        store.discarded.pop(slot_id, None)
+        store.undiscard(slot_id)
         store.set_status(slot_id, ACCEPTED)
         acknowledge("Ok! Lo prenoterò appena lo ritrovo disponibile")
         decider.update(session, slot_id, "✅ Accettato in ritardo: verrà prenotato appena lo ritrovo disponibile.")

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Accedi · RL Prenota Online{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Accedi</h1>
+  <p>Inserisci il tuo nome di accesso (o il tuo username Telegram). Riceverai su Telegram una richiesta da approvare.</p>
+  <form method="post" action="{{ base }}/login">
+    <label>Nome di accesso
+      <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" required autofocus>
+    </label>
+    <button>Continua</button>
+  </form>
+</section>
+{% endblock %}

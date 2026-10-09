@@ -58,6 +58,9 @@ class ComuniIndex:
     def find(self, name):
         return self._by_name.get(normalize_name(name)) if name else None
 
+    def names(self):
+        return sorted(c.name for c in self._all)
+
     def provinces(self):
         return sorted({c.province for c in self._all})
 

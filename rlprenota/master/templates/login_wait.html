@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block head %}{% if login_status == "pending" %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block title %}Conferma su Telegram · RL Prenota Online{% endblock %}
+{% block content %}
+<section class="card narrow">
+  {% if login_status == "pending" %}
+    <h1>Conferma su Telegram</h1>
+    <p>{% if reauth %}Per modificare i dati personali{% else %}Per accedere{% endif %} premi <strong>«Sì, sono io»</strong>
+       nel messaggio che ti abbiamo inviato su Telegram. Questa pagina si aggiorna da sola.</p>
+    <p class="muted">Se il nome è giusto ma non ricevi nulla, controlla di aver aperto il link di invito nel bot.</p>
+    <details>
+      <summary>Preferisci inserire il codice?</summary>
+      <form method="post" action="{{ base }}/login/code">
+        <label>Codice di 6 cifre
+          <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        </label>
+        <button>Conferma</button>
+      </form>
+    </details>
+  {% elif login_status == "denied" %}
+    <h1>Accesso negato</h1>
+    <p>La richiesta è stata rifiutata o il codice è stato sbagliato troppe volte.</p>
+    <p><a class="button" href="{{ base }}/login">Riprova</a></p>
+  {% else %}
+    <h1>Richiesta scaduta</h1>
+    <p>La richiesta non è più valida.</p>
+    <p><a class="button" href="{{ base }}/login">Riprova</a></p>
+  {% endif %}
+</section>
+{% endblock %}
