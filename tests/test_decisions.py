@@ -111,5 +111,21 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(self.bot.poll(), [])  # offset advanced: nothing delivered twice
 
 
+class ProvinceMatchTest(unittest.TestCase):
+    def test_tolerant_but_unambiguous(self):
+        import main
+
+        class Option:
+            def __init__(self, text):
+                self.text = text
+
+        options = [Option(t) for t in ["", "BERGAMO", "MILANO CITTA'", "MILANO PROVINCIA", "MONZA E DELLA BRIANZA"]]
+        match = lambda name: (main.match_province_option(options, name) or Option(None)).text
+        self.assertEqual(match("MILANO CITTA"), "MILANO CITTA'")
+        self.assertEqual(match("Milano Città"), "MILANO CITTA'")
+        self.assertEqual(match("monza"), "MONZA E DELLA BRIANZA")
+        self.assertIsNone(match("MILANO"))  # ambiguous
+        self.assertIsNone(match("ROMA"))
+
 if __name__ == "__main__":
     unittest.main()

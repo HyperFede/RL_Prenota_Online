@@ -15,6 +15,7 @@ from datetime import datetime
 import time
 import sys
 import re
+import unicodedata
 
 DEBUG_MODE = False
 
@@ -532,6 +533,25 @@ def fill_contacts_form(driver, search_preferences):
             driver.execute_script("arguments[0].click();", consent)
 
 
+def normalize_province(name):
+    # "Milano Città", "MILANO CITTA'" and "milano  citta" all become "MILANO CITTA"
+    name = unicodedata.normalize("NFKD", name or "")
+    name = "".join(c for c in name if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", name.upper()).split())
+
+
+def match_province_option(options, province_name):
+    wanted = normalize_province(province_name)
+    if not wanted:
+        return None
+    exact = [o for o in options if normalize_province(o.text) == wanted]
+    if exact:
+        return exact[0]
+    # e.g. "MONZA" -> "MONZA E DELLA BRIANZA", only if unambiguous
+    partial = [o for o in options if normalize_province(o.text).startswith(wanted)]
+    return partial[0] if len(partial) == 1 else None
+
+
 def search_in_province(driver, ignored_exceptions, province_name, search_preferences):
     try:
         debug_print("\n--- INIZIO INTERAZIONE FORM RICERCA ---")
@@ -571,7 +591,11 @@ def search_in_province(driver, ignored_exceptions, province_name, search_prefere
 
         debug_print(f"5. Seleziono la provincia: {province_name}...")
         element = Select(provincia_select)
-        element.select_by_visible_text(province_name)
+        option = match_province_option(element.options, province_name)
+        if option is None:
+            available = ", ".join(o.text.strip() for o in element.options if o.text.strip())
+            raise NoSuchElementException(f"provincia '{province_name}' non trovata. Valori disponibili: {available}")
+        element.select_by_visible_text(option.text)
         
         debug_print("-> Eseguo evento Javascript 'change' sul dropdown...")
         driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", provincia_select)
