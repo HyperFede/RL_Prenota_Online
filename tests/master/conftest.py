@@ -1,21 +1,6 @@
-import os
-
 import pytest
 
 from rlprenota.master.auth import AuthService
-from rlprenota.master.crypto import Crypto
-from rlprenota.master.db import Database
-
-
-class Clock:
-    def __init__(self, now=1_800_000_000.0):
-        self.now = now
-
-    def __call__(self):
-        return self.now
-
-    def advance(self, seconds):
-        self.now += seconds
 
 
 class FakeNotifier:
@@ -28,21 +13,6 @@ class FakeNotifier:
 
     def send(self, chat_id, text):
         self.messages.append((chat_id, text))
-
-
-@pytest.fixture
-def clock():
-    return Clock()
-
-
-@pytest.fixture
-def db(tmp_path):
-    return Database(str(tmp_path / "master.db"))
-
-
-@pytest.fixture
-def crypto():
-    return Crypto({1: os.urandom(32)}, current=1)
 
 
 @pytest.fixture

@@ -82,7 +82,8 @@ class FakeTelegram:
                 answer = self.answers.pop(0)
                 if answer:
                     slot_id = buttons[0][0]["callback_data"].split(":", 1)[1]
-                    self.press(message_id, f"{answer}:{slot_id}")
+                    # Answer from the chat the proposal was sent to
+                    self.press(message_id, f"{answer}:{slot_id}", chat_id=body.get("chat_id") or CHAT_ID)
             return {"message_id": message_id}
         if method == "editMessageText":
             self.edits.append((body["message_id"], body["text"], "reply_markup" in body))
