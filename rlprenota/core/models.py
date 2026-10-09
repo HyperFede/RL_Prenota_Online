@@ -71,7 +71,8 @@ class Slot:
     def slot_id(self):
         key = "|".join([self.date_str, self.time_str, _normalize(self.azienda), _normalize(self.sede),
                         _normalize(self.comune), _normalize(self.provincia)])
-        return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        # Identifier, not a security feature (kept as SHA-1 so saved decisions stay valid)
+        return hashlib.sha1(key.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
     def to_dict(self):
         return {"when": self.when.strftime("%d/%m/%Y %H:%M"), "azienda": self.azienda, "sede": self.sede,
@@ -95,8 +96,11 @@ class Slot:
 
 
 class SearchPreferences:
-    def __init__(self, province, start_date, end_date, refresh_frequency, dry_run=True, telegram_token="", telegram_chat_id="",
-                 telefono="", email="", visita_controllo=None, telegram_timeout_minuti=15, continua_dopo_prenotazione=False):
+    # telegram_token defaults to "" (no Telegram), it is not a hardcoded password
+    def __init__(self, province, start_date, end_date, refresh_frequency, dry_run=True, telegram_token="", telegram_chat_id="",  # nosec B107
+                 telefono="", email="", visita_controllo=None, telegram_timeout_minuti=15, continua_dopo_prenotazione=False,
+                 location_mode="provinces", home_comune="", max_km=None, facilities=None,
+                 weekdays=None, time_from=None, time_to=None):
         self.province = province
         self.start_date = start_date
         self.end_date = end_date
@@ -110,20 +114,34 @@ class SearchPreferences:
         self.visita_controllo = visita_controllo
         self.telegram_timeout_minuti = telegram_timeout_minuti
         self.continua_dopo_prenotazione = continua_dopo_prenotazione
-
+        # Where and when: see rlprenota.core.filters.SearchFilter
+        self.location_mode = location_mode
+        self.home_comune = home_comune
+        self.max_km = max_km
+        self.facilities = facilities or []
+        self.weekdays = weekdays          # set of 0 (Monday) .. 6 (Sunday), None = any day
+        self.time_from = time_from        # datetime.time or "HH:MM", None = no limit
+        self.time_to = time_to
+    
     def get_start_date_input(self):
         return ''.join(filter(str.isdigit, self.start_date))
 
     def get_start_date_datetime(self):
         return datetime.strptime(self.start_date, "%d/%m/%Y")
-
+    
     def get_end_date_datetime(self):
         return datetime.strptime(self.end_date, "%d/%m/%Y")
 
-    def is_in_date_window(self, when: datetime):
-        # Empty dates mean "no limit"
-        if self.start_date and when.date() < self.get_start_date_datetime().date():
-            return False
-        if self.end_date and when.date() > self.get_end_date_datetime().date():
-            return False
-        return True
+    def build_filter(self, comuni=None):
+        from rlprenota.core.filters import SearchFilter
+        from rlprenota.geo.distance import ComuniIndex
+
+        def as_time(value):
+            return datetime.strptime(value, "%H:%M").time() if isinstance(value, str) and value else (value or None)
+
+        return SearchFilter(
+            comuni or ComuniIndex.load(), self.location_mode, provinces=self.province, home_comune=self.home_comune,
+            max_km=self.max_km, facilities=self.facilities,
+            start_date=self.get_start_date_datetime().date() if self.start_date else None,
+            end_date=self.get_end_date_datetime().date() if self.end_date else None,
+            weekdays=self.weekdays, time_from=as_time(self.time_from), time_to=as_time(self.time_to))

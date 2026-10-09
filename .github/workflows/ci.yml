@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m pyflakes rlprenota main.py tests scripts
+      - name: Security scan (code)
+        run: bandit -q -r rlprenota main.py
+      - name: Security scan (dependencies)
+        run: pip-audit -r requirements.txt
+      - name: Tests (headless Chrome is preinstalled on the runner)
+        run: pytest --cov=rlprenota --cov-report=term-missing
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          docker build -f deploy/Dockerfile --target master -t rl-prenota-master:ci .
+          docker build -f deploy/Dockerfile --target worker -t rl-prenota-worker:ci .
+      - name: Master runs as non-root on a read-only filesystem
+        run: >
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges rl-prenota-master:ci
+          python -c "import os, rlprenota.master.service; assert os.getuid() != 0; print('master ok')"
+      - name: Headless Chromium starts with the seccomp profile and its sandbox on
+        run: >
+          docker run --rm --read-only --tmpfs /tmp --shm-size 256m --cap-drop ALL
+          --security-opt no-new-privileges --security-opt seccomp=deploy/chrome-seccomp.json rl-prenota-worker:ci
+          python -c "from rlprenota.worker.browser import make_chromium;
+          d = make_chromium(); d.get('data:text/html,<p>sandbox ok</p>');
+          print(d.find_element('tag name', 'p').text); d.quit()"

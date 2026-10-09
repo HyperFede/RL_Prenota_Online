@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Amministrazione · RL Prenota Online{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block nav %}<a href="{{ base }}/">Panoramica</a>{% endblock %}
+{% macro csrf_field() %}<input type="hidden" name="csrf" value="{{ user.csrf_token }}">{% endmacro %}
+{% block content %}
+<h1>Amministrazione</h1>
+
+{% if invite %}
+<section class="card">
+  <h2>Invito per {{ invite.name }}</h2>
+  <p>Invia questo link (valido 24 ore, usabile una volta). Nome di accesso: <strong>{{ invite.login }}</strong></p>
+  <p><code class="wrap">{{ invite.link }}</code></p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Stato del servizio</h2>
+  {% if paused %}
+    <p class="alert">⏸ Ricerche sospese: {{ paused }}</p>
+    <form method="post" action="{{ base }}/global/resume">{{ csrf_field() }}<button>Riprendi tutte le ricerche</button></form>
+  {% elif pause_until and pause_until > 0 and (pause_until | when) != "—" %}
+    <p class="muted">Pausa automatica fino a {{ pause_until | when }} (portale sovraccarico)</p>
+  {% else %}
+    <p><span class="status status-active">In funzione</span></p>
+    <form method="post" action="{{ base }}/global/pause" class="row">{{ csrf_field() }}
+      <label>Motivo <input name="reason" maxlength="200" placeholder="es. manutenzione"></label>
+      <button class="secondary">Sospendi tutte le ricerche</button></form>
+  {% endif %}
+  <dl class="facts">
+    <dt>Ricerche attive</dt><dd>{{ capacity.active }} / {{ capacity.total }} (max {{ capacity.per_user }} per utente)</dd>
+    <dt>In esecuzione ora</dt><dd>{{ capacity.leases }} su {{ capacity.workers }} worker</dd>
+    <dt>Durata media di un ciclo</dt><dd>{% if capacity.avg_cycle %}{{ capacity.avg_cycle | round | int }} s{% else %}—{% endif %}</dd>
+    <dt>Controllo del portale</dt><dd>{{ canary.status }} {% if canary.detail %}({{ canary.detail }}){% endif %} · {{ canary.at | when }}</dd>
+  </dl>
+  <div class="actions">
+    <form method="post" action="{{ base }}/canary/run">{{ csrf_field() }}<button class="secondary">Controlla il portale ora</button></form>
+  </div>
+  <form method="post" action="{{ base }}/limits" class="row">{{ csrf_field() }}
+    <label>Max ricerche per utente <input name="per_user" type="number" min="1" max="10" value="{{ capacity.per_user }}"></label>
+    <label>Max ricerche totali <input name="total" type="number" min="1" max="30" value="{{ capacity.total }}"></label>
+    <button class="secondary">Salva limiti</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Utenti</h2>
+  <table>
+    <tr><th>Nome</th><th>Stato</th><th>Ultimo accesso</th><th>Ricerche</th><th></th></tr>
+    {% for u in users %}
+    <tr><td>{{ u.display_name }}{% if u.is_admin %} <span class="status">admin</span>{% endif %}</td>
+        <td>{{ {"active": "attivo", "invited": "invitato", "disabled": "disattivato"}.get(u.status, u.status) }}</td><td>{{ u.last_login_at | when }}</td><td>{{ u.searches }}</td>
+        <td>{% if u.id != user.user_id %}
+          <form method="post" action="{{ base }}/users/{{ u.id }}/{{ 'enable' if u.status == 'disabled' else 'disable' }}">{{ csrf_field() }}
+            <button class="link">{{ 'riattiva' if u.status == 'disabled' else 'disattiva' }}</button></form>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  <h3>Nuovo invito</h3>
+  <form method="post" action="{{ base }}/invite" class="row">{{ csrf_field() }}
+    <label>Nome <input name="name" maxlength="60" required></label>
+    <label>Nome di accesso <input name="login" maxlength="32" pattern="[a-z0-9._]{3,32}" required></label>
+    <label class="check"><input type="checkbox" name="admin"> amministratore</label>
+    <button>Crea invito</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Ricerche</h2>
+  <table>
+    <tr><th>Ricerca</th><th>Utente</th><th>Stato</th><th>Ultimo controllo</th><th>Esito</th><th></th></tr>
+    {% for s in searches %}
+    <tr><td>{{ s.label }}</td><td>{{ s.owner }}</td>
+        <td>{{ status_labels.get(s.status, s.status) }}{% if s.consecutive_failures %} ({{ s.consecutive_failures }} errori){% endif %}</td>
+        <td>{{ s.last_run_at | when }}</td><td class="muted">{{ s.last_result }}</td>
+        <td>{% if s.status in ("active", "waiting") %}
+          <form method="post" action="{{ base }}/searches/{{ s.id }}/pause">{{ csrf_field() }}<button class="link">pausa</button></form>
+        {% elif s.status in ("paused", "error") %}
+          <form method="post" action="{{ base }}/searches/{{ s.id }}/resume">{{ csrf_field() }}<button class="link">riprendi</button></form>
+        {% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+
+<details class="card">
+  <summary>Registro attività</summary>
+  <table>{% for a in audit %}<tr><td>{{ a.ts | when }}</td><td>{{ a.user_id or "" }}</td><td>{{ a.action }}</td><td class="muted">{{ a.detail }}</td></tr>{% endfor %}</table>
+</details>
+{% endblock %}
