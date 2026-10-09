@@ -1,0 +1,4 @@
+*
+!deploy/requirements.lock
+!rlprenota/
+**/__pycache__

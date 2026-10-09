@@ -27,6 +27,7 @@ def init(base_dir):
     secrets_dir = os.path.join(base_dir, "secrets")
     os.makedirs(secrets_dir, mode=0o700, exist_ok=True)
     os.makedirs(os.path.join(base_dir, "data"), mode=0o700, exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "tailscale"), mode=0o700, exist_ok=True)
     created = []
     key = os.path.join(secrets_dir, "master_key")
     if not os.path.exists(key):
@@ -62,7 +63,7 @@ def main(argv=None, env=None):
     if args.command == "init":
         created = init(args.dir)
         print("Creati: " + (", ".join(created) if created else "niente (esistevano già)"))
-        print("Aggiungi il token del bot in secrets/bot_token (chmod 600).")
+        print("Ora crea secrets/bot_token (token di @BotFather) e secrets/tailscale.env (TS_AUTHKEY=...), entrambi chmod 600.")
         return 0
 
     config, services = _services(env)

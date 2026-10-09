@@ -28,6 +28,7 @@ def test_init_creates_private_secrets_once(tmp_path):
     manage.init(str(tmp_path))                     # idempotent: never regenerates keys
     assert (secrets / "master_key").read_bytes() == key_before
     assert len((secrets / "url_prefix").read_text().strip()) >= 24
+    assert (tmp_path / "tailscale").is_dir() and (tmp_path / "data").is_dir()
 
 
 def test_config_reads_secrets_from_files_only(tmp_path):
