@@ -1,0 +1,113 @@
+# RL Prenota Online on the NAS (Container Station "application").
+#
+# Networks:
+#   backend (internal, no internet): master internal API <-> workers
+#   edge    (internal, no internet): master web apps <-> Tailscale sidecar
+#   egress  (internet): master -> Telegram + canary, workers -> portal, sidecar -> Tailscale
+# Nothing is published on the NAS: the user app is reachable only through Tailscale Funnel (port 443,
+# random path prefix), the admin console only inside the tailnet (port 8443).
+#
+# Memory budget (~1.7 GB peak, fits beside the Ubuntu VM): master 256 MB, 2 workers x 700 MB, sidecar 64 MB.
+# All containers run as the NAS user owning RLP_HOME (RLP_UID/RLP_GID), so the 0600 secret files stay
+# readable without sudo; root filesystems are read-only and every Linux capability is dropped.
+
+name: rl-prenota
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  master:
+    <<: *hardening
+    build: {context: .., dockerfile: deploy/Dockerfile, target: master}
+    image: rl-prenota-master:local
+    user: "${RLP_UID}:${RLP_GID}"
+    environment:
+      RLP_DATA_DIR: /data
+      RLP_SECRETS_DIR: /run/secrets
+      RLP_PUBLIC_ORIGIN: ${RLP_PUBLIC_ORIGIN}
+      RLP_ADMIN_ORIGIN: ${RLP_PUBLIC_ORIGIN}:8443
+      RLP_BOT_USERNAME: ${RLP_BOT_USERNAME}
+      RLP_WORKERS: "2"
+      RLP_TRUSTED_PROXIES: 172.30.20.2
+      RLP_USER_BIND: 172.30.20.10
+      RLP_ADMIN_BIND: 172.30.20.10
+      RLP_INTERNAL_BIND: 172.30.10.10
+    volumes:
+      - ${RLP_HOME}/data:/data
+      - ${RLP_HOME}/secrets/master_key:/run/secrets/master_key:ro
+      - ${RLP_HOME}/secrets/worker_secret:/run/secrets/worker_secret:ro
+      - ${RLP_HOME}/secrets/bot_token:/run/secrets/bot_token:ro
+      - ${RLP_HOME}/secrets/url_prefix:/run/secrets/url_prefix:ro
+    tmpfs: [/tmp:size=32m]
+    networks:
+      backend: {ipv4_address: 172.30.10.10}
+      edge: {ipv4_address: 172.30.20.10}
+      egress: {}
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('172.30.10.10', 8002), 3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *hardening
+    build: {context: .., dockerfile: deploy/Dockerfile, target: worker}
+    image: rl-prenota-worker:local
+    user: "${RLP_UID}:${RLP_GID}"
+    security_opt: ["no-new-privileges:true", "seccomp=./chrome-seccomp.json"]
+    environment:
+      RLP_MASTER_URL: http://172.30.10.10:8002
+      RLP_SECRETS_DIR: /run/secrets
+    volumes:
+      - ${RLP_HOME}/secrets/worker_secret:/run/secrets/worker_secret:ro
+    tmpfs: [/tmp:size=256m]
+    shm_size: 256m
+    networks: [backend, egress]
+    deploy:
+      replicas: 2
+    mem_limit: 700m
+    cpus: 1.0
+    pids_limit: 512
+    depends_on: [master]
+
+  tailscale:
+    <<: *hardening
+    image: tailscale/tailscale:stable@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
+    hostname: rl-prenota
+    user: "${RLP_UID}:${RLP_GID}"
+    env_file: ${RLP_HOME}/secrets/tailscale.env      # TS_AUTHKEY=... (chmod 600)
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"                             # no TUN device, no extra capabilities
+      TS_SOCKET: /tmp/tailscaled.sock
+      TS_AUTH_ONCE: "true"
+    volumes:
+      - ${RLP_HOME}/tailscale:/var/lib/tailscale
+      - ./tailscale/serve.json:/config/serve.json:ro
+    tmpfs: [/tmp:size=16m]
+    networks:
+      edge: {ipv4_address: 172.30.20.2}
+      egress: {}
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+
+networks:
+  backend:
+    internal: true
+    ipam: {config: [{subnet: 172.30.10.0/24}]}
+  edge:
+    internal: true
+    ipam: {config: [{subnet: 172.30.20.0/24}]}
+  egress: {}

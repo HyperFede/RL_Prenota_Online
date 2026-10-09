@@ -10,3 +10,4 @@ stato_ricerca.json.tmp
 .coverage
 .pytest_cache/
 .claude/launch.json
+deploy/.env

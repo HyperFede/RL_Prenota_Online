@@ -35,6 +35,8 @@ class Config:
     workers: int = 2
     trusted_proxies: tuple = ()
     user_port: int = 8000
+    user_bind: str = "127.0.0.1"
+    internal_bind: str = "127.0.0.1"
     admin_bind: str = "127.0.0.1"
     admin_port: int = 8001
     internal_port: int = 8002
@@ -78,7 +80,8 @@ class Config:
             worker_secret=worker_secret, url_prefix=read_secret(os.path.join(secrets_dir, "url_prefix")),
             workers=int(env.get("RLP_WORKERS", "2")),
             trusted_proxies=tuple(p.strip() for p in env.get("RLP_TRUSTED_PROXIES", "").split(",") if p.strip()),
-            user_port=int(env.get("RLP_USER_PORT", "8000")), admin_bind=env.get("RLP_ADMIN_BIND", "127.0.0.1"),
+            user_port=int(env.get("RLP_USER_PORT", "8000")), user_bind=env.get("RLP_USER_BIND", "127.0.0.1"),
+            internal_bind=env.get("RLP_INTERNAL_BIND", "127.0.0.1"), admin_bind=env.get("RLP_ADMIN_BIND", "127.0.0.1"),
             admin_port=int(env.get("RLP_ADMIN_PORT", "8001")), internal_port=int(env.get("RLP_INTERNAL_PORT", "8002")),
             telegram_api=env.get("RLP_TELEGRAM_API", "https://api.telegram.org"),
             admin_origin=env.get("RLP_ADMIN_ORIGIN", f"{origin.rstrip('/')}:8443"))

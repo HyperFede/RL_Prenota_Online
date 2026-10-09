@@ -95,10 +95,10 @@ def servers_for(services):
     config = services.config
     user_services = Services(db=services.db, crypto=services.crypto, auth=services.auth, searches=services.searches,
                              trusted_proxies=config.trusted_proxies, public_origin=config.public_origin)
-    # 0.0.0.0 inside the container: the ports are only reachable on the Docker networks (never published on the NAS)
-    apps = [(create_user_app(user_services, config.url_prefix), "0.0.0.0", config.user_port),  # nosec B104
+    # Each server listens only on its own Docker network address (see deploy/docker-compose.yml)
+    apps = [(create_user_app(user_services, config.url_prefix), config.user_bind, config.user_port),
             (create_internal_app(services.scheduler, services.router, services.searches, config.worker_secret),
-             "0.0.0.0", config.internal_port)]  # nosec B104
+             config.internal_bind, config.internal_port)]
     try:
         from rlprenota.master.admin_app import create_admin_app
         apps.append((create_admin_app(services), config.admin_bind, config.admin_port))
