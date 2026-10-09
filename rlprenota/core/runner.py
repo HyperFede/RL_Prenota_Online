@@ -32,6 +32,7 @@ class SearchSession:
         self.before_search = before_search   # e.g. the global rate limiter on the NAS
         self.mode = None
         self.current_appointment = None
+        self.booked_slot = None              # set when this session books something
 
     def open(self, attempts=1, retry_delay=30):
         for attempt in range(1, attempts + 1):
@@ -156,6 +157,7 @@ def process_results(session, province):
             return "RESET"
 
         store.set_status(slot.slot_id, BOOKED)
+        session.booked_slot = slot
         if session.current_appointment is not None:
             session.current_appointment.change_app(slot.appointment_date_str, slot.address)
         log.info(f"\n!!! APPUNTAMENTO PRENOTATO CON SUCCESSO !!!\n{slot.describe()}")
