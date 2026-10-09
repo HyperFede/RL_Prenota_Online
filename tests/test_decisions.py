@@ -6,9 +6,9 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dataObjects import Slot, SearchPreferences
-from decisions import DecisionStore, EXPIRED, ACCEPTED, BOOKED
-from telegram_bot import TelegramBot, ACCEPT, REJECT
+from rlprenota.core.models import Slot
+from rlprenota.core.decisions import DecisionStore, EXPIRED, ACCEPTED, BOOKED, ACCEPT, REJECT
+from rlprenota.telegram import TelegramBot
 from tests.fakes import FakeTelegram, CHAT_ID
 
 
@@ -71,15 +71,6 @@ class DecisionStoreTest(unittest.TestCase):
         self.assertFalse(store.should_propose(slot()))
 
 
-class DateWindowTest(unittest.TestCase):
-    def test_window(self):
-        prefs = SearchPreferences([], "01/11/2026", "30/11/2026", 60)
-        self.assertTrue(prefs.is_in_date_window(datetime(2026, 11, 30, 18, 0)))
-        self.assertFalse(prefs.is_in_date_window(datetime(2026, 12, 1, 8, 0)))
-        self.assertFalse(prefs.is_in_date_window(datetime(2026, 10, 31, 8, 0)))
-        self.assertTrue(SearchPreferences([], "", "", 60).is_in_date_window(datetime(2030, 1, 1)))
-
-
 class TelegramBotTest(unittest.TestCase):
     def setUp(self):
         self.fake = FakeTelegram()
@@ -87,6 +78,23 @@ class TelegramBotTest(unittest.TestCase):
 
     def tearDown(self):
         self.fake.close()
+
+    def test_only_https_api(self):
+        for url in ("http://api.telegram.org", "file:///etc/passwd", "ftp://example.com"):
+            with self.assertRaises(ValueError):
+                TelegramBot("TOKEN", CHAT_ID, api_url=url)
+
+    def test_certificate_errors_never_fall_back_to_insecure_tls(self):
+        import ssl
+        import urllib.error
+        from unittest import mock
+        from rlprenota.telegram import TelegramError
+        bot = TelegramBot("TOKEN", CHAT_ID)
+        failure = urllib.error.URLError(ssl.SSLCertVerificationError("self-signed certificate"))
+        with mock.patch("urllib.request.urlopen", side_effect=failure) as urlopen:
+            with self.assertRaises(TelegramError):
+                bot.send("x")
+        self.assertEqual(urlopen.call_count, 1)  # no retry without verification
 
     def test_send_with_buttons(self):
         message_id = self.bot.send("hello", TelegramBot.decision_buttons("abc"))
@@ -113,14 +121,14 @@ class TelegramBotTest(unittest.TestCase):
 
 class ProvinceMatchTest(unittest.TestCase):
     def test_tolerant_but_unambiguous(self):
-        import main
+        from rlprenota.core import portal
 
         class Option:
             def __init__(self, text):
                 self.text = text
 
         options = [Option(t) for t in ["", "BERGAMO", "MILANO CITTA'", "MILANO PROVINCIA", "MONZA E DELLA BRIANZA"]]
-        match = lambda name: (main.match_province_option(options, name) or Option(None)).text
+        match = lambda name: (portal.match_province_option(options, name) or Option(None)).text
         self.assertEqual(match("MILANO CITTA"), "MILANO CITTA'")
         self.assertEqual(match("Milano Città"), "MILANO CITTA'")
         self.assertEqual(match("monza"), "MONZA E DELLA BRIANZA")

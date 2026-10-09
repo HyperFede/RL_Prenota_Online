@@ -12,6 +12,19 @@ end_date = "31/03/2027"                  # gg/mm/aaaa, "" = nessun limite
 refresh_frequency = 300                  # secondi di pausa tra un ciclo di ricerca e il successivo
 dry_run = True                           # True = verifica soltanto, non prenota e non modifica nulla
 
+### DOVE (in alternativa alle province) ###
+modalita_luogo = "provinces"             # "provinces" | "radius" (entro N km) | "facilities" (strutture scelte)
+comune_di_partenza = "Milano"            # per "radius": il tuo comune (nessun indirizzo esatto)
+distanza_massima_km = 25                 # per "radius": da 1 a 200 km
+strutture = [                            # per "facilities": nome (anche parziale) e provincia
+    # {"name": "Niguarda", "province": "MILANO CITTA'"},
+]
+
+### QUANDO ###
+giorni_settimana = None                  # es. {0, 1, 2, 3, 4} = da lunedì a venerdì; None = tutti
+orario_da = None                         # es. "08:00"; None = nessun limite
+orario_a = None                          # es. "12:30"
+
 ### SOLO PER UNA PRIMA PRENOTAZIONE ###
 # Se la ricetta non ha ancora un appuntamento il programma lo rileva da solo e cerca una prima data.
 # In questo caso il portale chiede un recapito telefonico (obbligatorio) e, per alcune ricette,

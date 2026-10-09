@@ -6,3 +6,6 @@ data_file.py
 geckodriver.log
 stato_ricerca.json
 stato_ricerca.json.tmp
+.venv/
+.coverage
+.pytest_cache/
