@@ -13,8 +13,10 @@
     <a class="brand" href="{{ base }}/">RL Prenota Online</a>
     {% if user %}
     <nav>
+      {% block nav %}
       <a href="{{ base }}/">Le mie ricerche</a>
       <a href="{{ base }}/searches/new">Nuova ricerca</a>
+      {% endblock %}
       <form method="post" action="{{ base }}/logout" class="inline">
         <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
         <button class="link">Esci</button>

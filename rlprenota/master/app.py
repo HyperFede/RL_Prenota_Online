@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
@@ -71,10 +72,10 @@ def bare_404():
     return Response(status_code=404)
 
 
-def create_user_app(services, prefix):
-    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", prefix):
-        raise ValueError("Il prefisso deve essere casuale (8-64 caratteri URL-safe)")
-    base = f"/{prefix}"
+def create_base_app(services, base, allow=None):
+    """Middleware, helpers and the Telegram login shared by the user app and the admin console.
+
+    `allow(session_info)` restricts who may use the app (e.g. admins only)."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
     from rlprenota.geo.distance import ComuniIndex
@@ -83,7 +84,7 @@ def create_user_app(services, prefix):
     templates.env.filters["when"] = lambda ts: datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M") if ts else "—"
     templates.env.filters["itdate"] = lambda iso: datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m/%Y") if iso else ""
     app.mount(f"{base}/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
-    auth, searches = services.auth, services.searches
+    auth = services.auth
 
     # --- middleware: hiding, origin check, headers ---
 
@@ -124,7 +125,8 @@ def create_user_app(services, prefix):
         return peer
 
     def current(request):
-        return auth.session(request.cookies.get(SESSION_COOKIE))
+        info = auth.session(request.cookies.get(SESSION_COOKIE))
+        return info if info is not None and (allow is None or allow(info)) else None
 
     def render(request, name, status=200, **context):
         return templates.TemplateResponse(request, name, {"user": context.pop("user", None), **context}, status_code=status)
@@ -176,6 +178,11 @@ def create_user_app(services, prefix):
             response.delete_cookie("rlp_r", path=base)
         else:
             session = auth.complete_login(browser)
+            if allow is not None and not allow(auth.session(session)):
+                auth.revoke(session)
+                response = render(request, "login.html", status=403, error="Accesso riservato agli amministratori")
+                response.delete_cookie(LOGIN_COOKIE, path=base)
+                return response
             response = redirect("")
             set_cookie(response, SESSION_COOKIE, session, SESSION_MAX_AGE, "lax")
         response.delete_cookie(LOGIN_COOKIE, path=base)
@@ -229,6 +236,19 @@ def create_user_app(services, prefix):
         set_cookie(response, LOGIN_COOKIE, browser, LOGIN_MAX_AGE, "strict")
         set_cookie(response, "rlp_r", next_path, LOGIN_MAX_AGE, "strict")
         return response
+
+    return SimpleNamespace(app=app, templates=templates, render=render, redirect=redirect, require_user=require_user,
+                           form_data=form_data, current=current)
+
+
+def create_user_app(services, prefix):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", prefix):
+        raise ValueError("Il prefisso deve essere casuale (8-64 caratteri URL-safe)")
+    base = f"/{prefix}"
+    shared = create_base_app(services, base)
+    app, render, redirect = shared.app, shared.render, shared.redirect
+    require_user, form_data = shared.require_user, shared.form_data
+    auth, searches = services.auth, services.searches
 
     # --- pages ---
 

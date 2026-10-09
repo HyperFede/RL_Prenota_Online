@@ -44,3 +44,7 @@ label.check { display: flex; align-items: flex-start; }
 .facts dd { margin: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 @media (max-width: 520px) { .facts { grid-template-columns: 1fr; } .facts dd { margin-bottom: .5rem; } }
+table { width: 100%; border-collapse: collapse; font-size: .92em; }
+th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+code.wrap { word-break: break-all; }
+.row > button, .row > .button { flex: 0 0 auto; align-self: flex-end; margin-bottom: .5rem; }
