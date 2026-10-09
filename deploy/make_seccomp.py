@@ -24,7 +24,8 @@ def main():
         context = ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         context = ssl.create_default_context()
-    with urllib.request.urlopen(SOURCE, timeout=60, context=context) as response:  # nosec B310 - fixed https URL
+    # SOURCE is a fixed https URL
+    with urllib.request.urlopen(SOURCE, timeout=60, context=context) as response:  # nosec B310
         profile = json.load(response)
     if profile.get("defaultAction") != "SCMP_ACT_ERRNO" or not profile.get("syscalls"):
         sys.exit("Unexpected profile format")
