@@ -111,6 +111,7 @@ class TelegramBotTest(unittest.TestCase):
         self.fake.add_update({"message": {"chat": {"id": int(CHAT_ID)}, "text": "Sì!",
                                           "reply_to_message": {"message_id": 105}}})
         self.fake.add_update({"message": {"chat": {"id": int(CHAT_ID)}, "text": "ciao"}})  # not a reply
+        self.fake.press(106, "l:loginrequest:y")  # another kind of button: not a decision
 
         decisions = self.bot.poll()
         simplified = [(d["decision"], d.get("slot_id"), d.get("message_id")) for d in decisions]

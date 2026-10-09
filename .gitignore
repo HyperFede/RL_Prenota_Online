@@ -9,3 +9,4 @@ stato_ricerca.json.tmp
 .venv/
 .coverage
 .pytest_cache/
+.claude/launch.json

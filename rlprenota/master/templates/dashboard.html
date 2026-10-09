@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block content %}
+<h1>Ciao {{ user.display_name }}</h1>
+{% if not searches %}
+  <section class="card">
+    <p>Non hai ancora ricerche. <a href="{{ base }}/searches/new">Crea la prima</a>: indicherai la ricetta e dove e quando
+       vorresti la visita, e riceverai su Telegram le disponibilità trovate.</p>
+  </section>
+{% endif %}
+<ul class="searches">
+{% for s in searches %}
+  <li class="card">
+    <a href="{{ base }}/searches/{{ s.id }}" class="title">{{ s.settings.label }}</a>
+    <span class="status status-{{ s.status }}">{{ status_labels.get(s.status, s.status) }}</span>
+    <p class="muted">
+      {% if s.current_appointment %}Appuntamento attuale: {{ s.current_appointment }} · {% endif %}
+      Ultimo controllo: {{ s.last_run_at | when }}
+      {% if s.last_result %}<br>{{ s.last_result }}{% endif %}
+    </p>
+  </li>
+{% endfor %}
+</ul>
+<p><a class="button" href="{{ base }}/searches/new">Nuova ricerca</a></p>
+
+<details class="card">
+  <summary>Dispositivi collegati ({{ sessions | length }})</summary>
+  <ul>
+  {% for d in sessions %}<li>{{ d.device or "dispositivo" }} · ultimo uso {{ d.last_seen_at | when }}</li>{% endfor %}
+  </ul>
+  <form method="post" action="{{ base }}/sessions/revoke-all">
+    <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+    <button class="secondary">Esci da tutti i dispositivi</button>
+  </form>
+</details>
+{% endblock %}

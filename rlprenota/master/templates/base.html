@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  {% block head %}{% endblock %}
+  <title>{% block title %}RL Prenota Online{% endblock %}</title>
+  <link rel="stylesheet" href="{{ base }}/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="{{ base }}/">RL Prenota Online</a>
+    {% if user %}
+    <nav>
+      <a href="{{ base }}/">Le mie ricerche</a>
+      <a href="{{ base }}/searches/new">Nuova ricerca</a>
+      <form method="post" action="{{ base }}/logout" class="inline">
+        <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+        <button class="link">Esci</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% if error %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

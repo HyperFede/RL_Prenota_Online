@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% macro checked(name, value) %}{% if value in (values.get(name) or []) %}checked{% endif %}{% endmacro %}
+{% macro err(field) %}{% if error_field == field %}aria-invalid="true"{% endif %}{% endmacro %}
+{% block title %}{% if editing %}Modifica ricerca{% else %}Nuova ricerca{% endif %} · RL Prenota Online{% endblock %}
+{% block content %}
+<h1>{% if editing %}Modifica «{{ s.settings.label }}»{% else %}Nuova ricerca{% endif %}</h1>
+<form method="post" action="{{ base }}/searches{% if editing %}/{{ s.id }}/edit{% endif %}" class="search-form" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+
+  <fieldset>
+    <legend>Ricetta</legend>
+    {% if editing %}<p class="muted">Lascia vuoti i campi che non vuoi cambiare. Per modificarli serve una conferma su Telegram.</p>{% endif %}
+    <label>Nome della ricerca <input name="label" maxlength="60" value="{{ values.label or '' }}" placeholder="es. Visita cardiologica" {{ err('label') }}></label>
+    <label>Codice fiscale <input name="codice_fiscale" maxlength="16" autocapitalize="characters" spellcheck="false"
+           {% if editing %}placeholder="{{ s.masked.codice_fiscale }}"{% else %}required{% endif %} {{ err('codice_fiscale') }}></label>
+    <label>Ultime 5 cifre della tessera sanitaria <input name="tessera" inputmode="numeric" maxlength="5"
+           {% if editing %}placeholder="{{ s.masked.tessera }}"{% else %}required{% endif %} {{ err('tessera') }}></label>
+    <label>Codice della ricetta <input name="ricetta" maxlength="20" autocapitalize="characters" spellcheck="false"
+           {% if editing %}placeholder="{{ s.masked.ricetta }}"{% else %}required{% endif %} {{ err('ricetta') }}></label>
+    <label>Telefono <span class="muted">(obbligatorio solo per una prima prenotazione)</span>
+      <input name="telefono" inputmode="tel" maxlength="20" {% if editing %}placeholder="{{ s.masked.telefono }}"{% endif %} {{ err('telefono') }}></label>
+    <label>Email <span class="muted">(facoltativa)</span> <input name="email" type="email" maxlength="254" {{ err('email') }}></label>
+    <fieldset class="row">
+      <legend>La ricetta riporta la dicitura CONTROLLO o FOLLOW-UP?</legend>
+      <label><input type="radio" name="visita_controllo" value="" {% if not values.visita_controllo %}checked{% endif %}> Non so</label>
+      <label><input type="radio" name="visita_controllo" value="si" {% if values.visita_controllo == 'si' %}checked{% endif %}> Sì</label>
+      <label><input type="radio" name="visita_controllo" value="no" {% if values.visita_controllo == 'no' %}checked{% endif %}> No</label>
+    </fieldset>
+  </fieldset>
+
+  <fieldset class="where">
+    <legend>Dove</legend>
+    <div class="row">
+      <label><input type="radio" name="location_mode" value="provinces" id="mode-provinces" {% if (values.location_mode or 'provinces') == 'provinces' %}checked{% endif %}> Province</label>
+      <label><input type="radio" name="location_mode" value="radius" id="mode-radius" {% if values.location_mode == 'radius' %}checked{% endif %}> Entro una distanza</label>
+      <label><input type="radio" name="location_mode" value="facilities" id="mode-facilities" {% if values.location_mode == 'facilities' %}checked{% endif %}> Strutture precise</label>
+    </div>
+    <div class="mode provinces" {{ err('province') }}>
+      {% for p in provinces %}<label class="chip"><input type="checkbox" name="province" value="{{ p }}" {{ checked('province', p) }}> {{ p | title }}</label>{% endfor %}
+    </div>
+    <div class="mode radius">
+      <label>Il tuo comune <input name="home_comune" list="comuni" maxlength="60" value="{{ values.home_comune or '' }}" {{ err('home_comune') }}></label>
+      <label>Distanza massima (km) <input name="max_km" type="number" min="1" max="200" value="{{ values.max_km or '' }}" {{ err('max_km') }}></label>
+      <p class="muted">Usiamo solo il comune, non il tuo indirizzo. La distanza è in linea d'aria.</p>
+    </div>
+    <div class="mode facilities">
+      <label>Una struttura per riga: nome | provincia
+        <textarea name="facilities" rows="4" placeholder="Niguarda | MILANO CITTA'&#10;Ospedale di Circolo | VARESE" {{ err('facilities') }}>{{ values.facilities or '' }}</textarea></label>
+      <p class="muted">Basta una parte del nome, così come appare sul portale («Presentarsi in» o «Azienda»).</p>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Quando</legend>
+    <div class="row">
+      <label>Dal <input type="date" name="start_date" value="{{ values.start_date or '' }}" {{ err('start_date') }}></label>
+      <label>Entro il <input type="date" name="end_date" value="{{ values.end_date or '' }}" {{ err('end_date') }}></label>
+    </div>
+    <div class="row" {{ err('weekdays') }}>
+      {% for d in weekdays %}<label class="chip"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ checked('weekdays', loop.index0 | string) }}> {{ d }}</label>{% endfor %}
+    </div>
+    <p class="muted">Nessun giorno selezionato = tutti i giorni.</p>
+    <div class="row">
+      <label>Dalle <input type="time" name="time_from" value="{{ values.time_from or '' }}" {{ err('time_from') }}></label>
+      <label>Alle <input type="time" name="time_to" value="{{ values.time_to or '' }}" {{ err('time_to') }}></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Opzioni</legend>
+    <label>Controlla ogni
+      <select name="refresh_seconds">
+        {% for sec, text in [("60", "minuto"), ("120", "2 minuti"), ("300", "5 minuti"), ("600", "10 minuti"), ("1800", "30 minuti"), ("3600", "ora")] %}
+        <option value="{{ sec }}" {% if values.refresh_seconds == sec %}selected{% endif %}>{{ text }}</option>{% endfor %}
+      </select></label>
+    <label>Attendi la mia risposta su Telegram per (minuti)
+      <input name="telegram_timeout" type="number" min="1" max="120" value="{{ values.telegram_timeout or '15' }}" {{ err('telegram_timeout') }}></label>
+    <label class="check"><input type="checkbox" name="dry_run" {% if values.dry_run %}checked{% endif %}> Solo prova: non prenotare davvero (dry run)</label>
+    <label class="check"><input type="checkbox" name="continua_dopo_prenotazione" {% if values.continua_dopo_prenotazione %}checked{% endif %}> Dopo aver prenotato continua a cercare una data migliore</label>
+  </fieldset>
+
+  <button>{% if editing %}Salva{% else %}Avvia la ricerca{% endif %}</button>
+</form>
+<datalist id="comuni">{% for c in comuni %}<option value="{{ c }}">{% endfor %}</datalist>
+{% endblock %}
