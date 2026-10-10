@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Amministrazione · RL Prenota Online{% endblock %}
-{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block head %}{% if not invite %}<meta http-equiv="refresh" content="60">{% endif %}{% endblock %}
 {% block nav %}<a href="{{ base }}/">Panoramica</a>{% endblock %}
 {% macro csrf_field() %}<input type="hidden" name="csrf" value="{{ user.csrf_token }}">{% endmacro %}
 {% block content %}
@@ -9,7 +9,8 @@
 {% if invite %}
 <section class="card">
   <h2>Invito per {{ invite.name }}</h2>
-  <p>Invia questo link (valido 24 ore, usabile una volta). Nome di accesso: <strong>{{ invite.login }}</strong></p>
+  <p>Ruolo: <strong>{{ "Amministratore" if invite.admin else "Utente" }}</strong> · Nome di accesso: <strong>{{ invite.login }}</strong></p>
+  <p>Copia e invia questo link (valido 24 ore, usabile una volta). Se lo perdi, usa «Nuovo link» nella tabella utenti.</p>
   <p><code class="wrap">{{ invite.link }}</code></p>
 </section>
 {% endif %}
@@ -46,20 +47,31 @@
 <section class="card">
   <h2>Utenti</h2>
   <table>
-    <tr><th>Nome</th><th>Stato</th><th>Ultimo accesso</th><th>Ricerche</th><th></th></tr>
+    <tr><th>Nome</th><th>Ruolo</th><th>Stato</th><th>Ultimo accesso</th><th>Ricerche</th><th></th></tr>
     {% for u in users %}
-    <tr><td>{{ u.display_name }}{% if u.is_admin %} <span class="status">admin</span>{% endif %}</td>
-        <td>{{ {"active": "attivo", "invited": "invitato", "disabled": "disattivato"}.get(u.status, u.status) }}</td><td>{{ u.last_login_at | when }}</td><td>{{ u.searches }}</td>
-        <td>{% if u.id != user.user_id %}
+    <tr><td>{{ u.display_name }}</td>
+        <td>{{ "Amministratore" if u.is_admin else "Utente" }}</td>
+        <td>{{ {"active": "attivo", "invited": "invito non ancora usato", "disabled": "disattivato"}.get(u.status, u.status) }}</td>
+        <td>{{ u.last_login_at | when }}</td><td>{{ u.searches }}</td>
+        <td class="actions">{% if u.id != user.user_id %}
+          {% if u.status == "invited" %}
+          <form method="post" action="{{ base }}/users/{{ u.id }}/invite">{{ csrf_field() }}<button class="link">Nuovo link</button></form>
+          {% endif %}
+          <form method="post" action="{{ base }}/users/{{ u.id }}/role">{{ csrf_field() }}
+            <input type="hidden" name="role" value="{{ 'user' if u.is_admin else 'admin' }}">
+            <button class="link">{{ "rendi utente" if u.is_admin else "rendi amministratore" }}</button></form>
           <form method="post" action="{{ base }}/users/{{ u.id }}/{{ 'enable' if u.status == 'disabled' else 'disable' }}">{{ csrf_field() }}
-            <button class="link">{{ 'riattiva' if u.status == 'disabled' else 'disattiva' }}</button></form>{% endif %}</td></tr>
+            <button class="link">{{ 'riattiva' if u.status == 'disabled' else 'disattiva' }}</button></form>
+          <a href="{{ base }}/users/{{ u.id }}/delete" class="danger-link">elimina</a>
+        {% else %}<span class="muted">tu</span>{% endif %}</td></tr>
     {% endfor %}
   </table>
   <h3>Nuovo invito</h3>
   <form method="post" action="{{ base }}/invite" class="row">{{ csrf_field() }}
     <label>Nome <input name="name" maxlength="60" required></label>
     <label>Nome di accesso <input name="login" maxlength="32" pattern="[a-z0-9._]{3,32}" required></label>
-    <label class="check"><input type="checkbox" name="admin"> amministratore</label>
+    <label>Ruolo
+      <select name="role"><option value="user" selected>Utente</option><option value="admin">Amministratore</option></select></label>
     <button>Crea invito</button>
   </form>
 </section>

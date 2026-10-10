@@ -73,6 +73,8 @@ class AuthService:
                                        (display_name.strip()[:60] or "Utente", int(is_admin), now)).lastrowid
                 conn.execute("UPDATE users SET login_hash = ?, login_enc = ? WHERE id = ?",
                              (login_hash, self.crypto.encrypt(login_name, f"user:{user_id}"), user_id))
+            # A new link replaces any older unused one for the same person
+            conn.execute("UPDATE invites SET expires_at = 0 WHERE user_id = ? AND used_at IS NULL", (user_id,))
             conn.execute("INSERT INTO invites(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
                          (hash_token(token), user_id, now + INVITE_TTL_SECONDS))
             self.db.audit("invite_created", user_id, conn=conn)
@@ -115,6 +117,23 @@ class AuthService:
     def username(self, user_id):
         row = self.db.query_one("SELECT username_enc FROM users WHERE id = ?", (user_id,))
         return self.crypto.decrypt(row["username_enc"], f"user:{user_id}") if row and row["username_enc"] else ""
+
+    def is_linked(self, user_id):
+        row = self.db.query_one("SELECT chat_hash FROM users WHERE id = ?", (user_id,))
+        return bool(row and row["chat_hash"])
+
+    def set_admin(self, user_id, is_admin):
+        with self.db.tx() as conn:
+            conn.execute("UPDATE users SET is_admin = ? WHERE id = ?", (int(bool(is_admin)), user_id))
+            self.db.audit("role_admin" if is_admin else "role_user", user_id, conn=conn)
+
+    def delete_user(self, user_id):
+        """Remove the account and everything linked to it (searches, decisions, sessions, invites)."""
+        with self.db.tx() as conn:
+            deleted = conn.execute("DELETE FROM users WHERE id = ?", (user_id,)).rowcount
+            if deleted:
+                self.db.audit("user_deleted", user_id, conn=conn)
+        return bool(deleted)
 
     def set_user_status(self, user_id, status):
         if status not in ("active", "disabled"):

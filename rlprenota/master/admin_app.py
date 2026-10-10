@@ -8,8 +8,10 @@ from fastapi.responses import Response
 
 from rlprenota.master.app import Services, bare_404, create_base_app
 from rlprenota.master.auth import AuthError
+from rlprenota.master.crypto import hash_token
 
 BASE = "/admin"
+ROLES = {"user": False, "admin": True}
 MAX_LIMIT_PER_USER = 10
 MAX_LIMIT_TOTAL = 30
 
@@ -54,18 +56,85 @@ def create_admin_app(services):
             return user
         return overview(request, user)
 
+    def show_invite(request, user, token, user_id):
+        row = db.query_one("SELECT display_name, is_admin FROM users WHERE id = ?", (user_id,))
+        return overview(request, user, invite={"link": config.invite_link(token), "login": auth.login_name(user_id),
+                                               "name": row["display_name"], "admin": bool(row["is_admin"])})
+
+    @app.get(f"{BASE}/invite")
+    async def invite_reload(request: Request):
+        # The invite result is the answer to a POST: reloading it must not end on a blank page
+        return redirect("")
+
     @app.post(f"{BASE}/invite")
     async def invite(request: Request):
         form, user = await admin_form(request)
         if isinstance(user, Response):
             return user
+        role = form.get("role") or "user"
+        if role not in ROLES:
+            return overview(request, user, status=422, error="Ruolo non valido")
         try:
-            token = auth.create_invite((form.get("name") or "").strip(), is_admin=form.get("admin") == "on",
+            token = auth.create_invite((form.get("name") or "").strip(), is_admin=ROLES[role],
                                        login_name=(form.get("login") or "").strip())
         except AuthError as e:
             return overview(request, user, status=422, error=str(e))
-        return overview(request, user, invite={"link": config.invite_link(token), "login": (form.get("login") or "").strip().lower(),
-                                               "name": form.get("name")})
+        user_id = db.query_one("SELECT user_id FROM invites WHERE token_hash = ?", (hash_token(token),))["user_id"]
+        return show_invite(request, user, token, user_id)
+
+    def target_user(user_id):
+        return db.query_one("SELECT id, display_name, is_admin, status FROM users WHERE id = ?", (user_id,))
+
+    @app.post(f"{BASE}/users/{{user_id}}/invite")
+    async def new_link(request: Request, user_id: int):
+        form, user = await admin_form(request)
+        if isinstance(user, Response):
+            return user
+        target = target_user(user_id)
+        if target is None:
+            return bare_404()
+        if auth.is_linked(user_id):
+            # A new link for an already linked account would let whoever opens it take the account over
+            return overview(request, user, status=409, error=f"{target['display_name']} ha già collegato Telegram: non serve un nuovo link")
+        token = auth.create_invite(target["display_name"], user_id=user_id)
+        return show_invite(request, user, token, user_id)
+
+    @app.post(f"{BASE}/users/{{user_id}}/role")
+    async def change_role(request: Request, user_id: int):
+        form, user = await admin_form(request)
+        if isinstance(user, Response):
+            return user
+        if target_user(user_id) is None:
+            return bare_404()
+        role = form.get("role")
+        if role not in ROLES or user_id == user.user_id:
+            return overview(request, user, status=422, error="Non puoi cambiare il tuo ruolo" if user_id == user.user_id
+                            else "Ruolo non valido")
+        auth.set_admin(user_id, ROLES[role])
+        return redirect("")
+
+    @app.get(f"{BASE}/users/{{user_id}}/delete")
+    async def delete_confirm(request: Request, user_id: int):
+        user = require_user(request)
+        if isinstance(user, Response):
+            return user
+        target = target_user(user_id)
+        if target is None:
+            return bare_404()
+        count = db.query_one("SELECT COUNT(*) AS n FROM searches WHERE user_id = ?", (user_id,))["n"]
+        return render(request, "admin_delete.html", user=user, target=target, searches=count, is_self=user_id == user.user_id)
+
+    @app.post(f"{BASE}/users/{{user_id}}/delete")
+    async def delete_user(request: Request, user_id: int):
+        form, user = await admin_form(request)
+        if isinstance(user, Response):
+            return user
+        if target_user(user_id) is None:
+            return bare_404()
+        if user_id == user.user_id:
+            return overview(request, user, status=422, error="Non puoi eliminare il tuo account")
+        auth.delete_user(user_id)
+        return redirect("")
 
     @app.post(f"{BASE}/users/{{user_id}}/{{action}}")
     async def user_action(request: Request, user_id: int, action: str):
