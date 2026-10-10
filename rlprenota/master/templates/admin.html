@@ -51,10 +51,10 @@
     {% for u in users %}
     <tr><td>{{ u.display_name }}</td>
         <td>{{ "Amministratore" if u.is_admin else "Utente" }}</td>
-        <td>{{ {"active": "attivo", "invited": "invito non ancora usato", "disabled": "disattivato"}.get(u.status, u.status) }}</td>
+        <td>{% if u.status == "disabled" %}disattivato{% elif not u.linked %}invito non ancora usato{% else %}attivo{% endif %}</td>
         <td>{{ u.last_login_at | when }}</td><td>{{ u.searches }}</td>
         <td class="actions">{% if u.id != user.user_id %}
-          {% if u.status == "invited" %}
+          {% if not u.linked %}
           <form method="post" action="{{ base }}/users/{{ u.id }}/invite">{{ csrf_field() }}<button class="link">Nuovo link</button></form>
           {% endif %}
           <form method="post" action="{{ base }}/users/{{ u.id }}/role">{{ csrf_field() }}

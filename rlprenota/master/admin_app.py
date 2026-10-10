@@ -25,7 +25,7 @@ def create_admin_app(services):
     db, auth, searches, scheduler = services.db, services.auth, services.searches, services.scheduler
 
     def overview(request, user, status=200, **extra):
-        users = db.query("""SELECT u.id, u.display_name, u.is_admin, u.status, u.last_login_at,
+        users = db.query("""SELECT u.id, u.display_name, u.is_admin, u.status, u.last_login_at, u.chat_hash IS NOT NULL AS linked,
                                    (SELECT COUNT(*) FROM searches s WHERE s.user_id = u.id) AS searches
                             FROM users u ORDER BY u.id""")
         rows = db.query("""SELECT s.id, s.user_id, u.display_name AS owner, s.status, s.settings_json, s.last_run_at,
