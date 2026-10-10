@@ -87,6 +87,7 @@ services:
     user: "${RLP_UID}:${RLP_GID}"
     env_file: ${RLP_HOME}/secrets/tailscale.env      # TS_AUTHKEY=... (chmod 600)
     environment:
+      TZ: Europe/Rome
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
       TS_USERSPACE: "true"                             # no TUN device, no extra capabilities

@@ -4,7 +4,8 @@
 # Base pinned by digest; Python dependencies installed only with matching hashes.
 
 FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS base
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 HOME=/tmp
+# Italian time for pages, logs and the nightly backup (Docker defaults to UTC)
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 HOME=/tmp TZ=Europe/Rome
 COPY deploy/requirements.lock /tmp/requirements.lock
 RUN pip install --require-hashes --no-deps -r /tmp/requirements.lock && rm /tmp/requirements.lock
 WORKDIR /app
