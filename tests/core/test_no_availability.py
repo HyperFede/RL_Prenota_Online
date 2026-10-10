@@ -56,15 +56,27 @@ def session_for(provinces):
     return s
 
 
-def test_runner_recovers_the_form_and_continues_with_the_next_province():
+def test_runner_relogs_and_retries_the_same_province():
     s = session_for(["BERGAMO", "BRESCIA", "COMO", "LECCO"])
-    calls = [True, True, NoAvailability("Al momento non ci sono disponibilita' online"), True]
+    calls = [True, True, NoAvailability("Al momento non ci sono disponibilita' online"), True, True]
     with mock.patch.object(portal, "search_in_province", side_effect=calls) as search, \
             mock.patch.object(portal, "check_search_outcome", return_value="ERROR"), \
             mock.patch.object(portal, "cleanup_ui_for_next_search"):
         assert runner.run_cycle(s) == runner.CONTINUE
-    assert search.call_count == 4                 # Lecco was still searched
-    s.open.assert_called_once_with(attempts=3)    # logged in again to get the form back
+    searched = [c.args[2] for c in search.call_args_list]
+    assert searched == ["BERGAMO", "BRESCIA", "COMO", "COMO", "LECCO"]   # Como is retried, not skipped
+    s.open.assert_called_once_with(attempts=3)
+
+
+def test_a_province_refused_twice_is_skipped_and_the_next_one_searched():
+    s = session_for(["BERGAMO", "COMO", "LECCO"])
+    calls = [True, NoAvailability("no"), NoAvailability("no"), True]
+    with mock.patch.object(portal, "search_in_province", side_effect=calls) as search, \
+            mock.patch.object(portal, "check_search_outcome", return_value="ERROR"), \
+            mock.patch.object(portal, "cleanup_ui_for_next_search"):
+        assert runner.run_cycle(s) == runner.CONTINUE
+    assert [c.args[2] for c in search.call_args_list] == ["BERGAMO", "COMO", "COMO", "LECCO"]
+    assert s.open.call_count == 2                  # once to retry Como, once to get the form back for Lecco
 
 
 def test_runner_stops_the_cycle_quietly_when_the_portal_keeps_saying_no():
@@ -72,7 +84,9 @@ def test_runner_stops_the_cycle_quietly_when_the_portal_keeps_saying_no():
     with mock.patch.object(portal, "search_in_province", side_effect=NoAvailability("niente")) as search, \
             mock.patch.object(portal, "cleanup_ui_for_next_search"):
         assert runner.run_cycle(s) == runner.CONTINUE  # a normal "nothing now", retried at the next interval
-    assert search.call_count == 2 and s.open.call_count == 1
+    # Bergamo, Bergamo again after re-login, then Brescia right after another re-login: the portal refuses everything
+    assert [c.args[2] for c in search.call_args_list] == ["BERGAMO", "BERGAMO", "BRESCIA"]
+    assert s.open.call_count == 2
 
 
 def test_cli_loop_keeps_trying_when_the_portal_says_no_at_login():
