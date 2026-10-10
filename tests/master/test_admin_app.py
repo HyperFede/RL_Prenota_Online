@@ -202,3 +202,18 @@ def test_cannot_delete_yourself_or_unknown_users(client, auth, notifier):
     assert client.get("/admin/users/999/delete").status_code == 404
     assert client.post("/admin/users/999/delete", data={"csrf": csrf(client)}).status_code == 404
     assert client.post(f"/admin/users/{me}/delete", data={}).status_code == 403
+
+
+def test_reenabling_an_unused_invite_keeps_it_pending(client, auth, notifier, db):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    invite(client)
+    user_id = db.query_one("SELECT id FROM users WHERE display_name = 'Massi'")["id"]
+    client.post(f"/admin/users/{user_id}/disable", data={"csrf": csrf(client)})
+    client.post(f"/admin/users/{user_id}/enable", data={"csrf": csrf(client)})
+    assert db.query_one("SELECT status FROM users WHERE id = ?", (user_id,))["status"] == "invited"
+    # Even a row already wrongly marked active (as in production) offers a new link while Telegram isn't linked
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET status = 'active' WHERE id = ?", (user_id,))
+    page = client.get("/admin/").text
+    row = page[page.index(">Massi<"):][:1500]
+    assert "Nuovo link" in row and "invito non ancora usato" in row

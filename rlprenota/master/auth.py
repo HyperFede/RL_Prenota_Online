@@ -139,7 +139,12 @@ class AuthService:
         if status not in ("active", "disabled"):
             raise ValueError(status)
         with self.db.tx() as conn:
-            conn.execute("UPDATE users SET status = ? WHERE id = ?", (status, user_id))
+            if status == "active":
+                # Re-enabling someone who never linked Telegram puts them back to "invited"
+                conn.execute("UPDATE users SET status = CASE WHEN chat_hash IS NULL THEN 'invited' ELSE 'active' END "
+                             "WHERE id = ?", (user_id,))
+            else:
+                conn.execute("UPDATE users SET status = ? WHERE id = ?", (status, user_id))
             if status == "disabled":
                 conn.execute("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (self.clock(), user_id))
             self.db.audit(f"user_{status}", user_id, conn=conn)
