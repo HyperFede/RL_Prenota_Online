@@ -21,7 +21,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import WebDriverException
 
-from rlprenota.core.errors import ErrorKind, LoginRejected, PortalChanged, PortalError, classify
+from rlprenota.core.errors import ErrorKind, LoginRejected, NoAvailability, PortalChanged, PortalError, classify
 from rlprenota.core.models import Appointment, Slot
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,10 @@ MODE_RESCHEDULE = "modifica"  # the prescription already has an appointment: loo
 MODE_NEW = "nuova"            # no appointment yet: first-time booking
 
 # Matches "dd/mm/yyyy - HH:MM", "dd/mm/yyyy HH:MM", "dd/mm/yyyy alle HH:MM"...
+# How the portal says "nothing bookable online right now" (popup texts, lower case)
+NO_AVAILABILITY_MARKERS = ("non ci sono disponibilit", "nessuna disponibilit", "non sono state trovate disponibilit",
+                           "nessun appuntamento")
+
 DATE_TIME_RE = re.compile(r"(\d{2}/\d{2}/\d{4})[^\d]*(\d{2}:\d{2})")
 
 # The results list is paginated (5 per page, sorted by date): don't walk through too many pages
@@ -394,7 +398,7 @@ def check_search_outcome(driver, current_province, timeout=15):
     while time.time() - start_time < timeout:
         try:
             # Check A: Error Pop-up
-            error_texts = driver.find_elements(By.XPATH, "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'nessuna disponibilit') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'nessun appuntamento') or contains(@class, 'modal-title') and contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'attenzione')]")
+            error_texts = driver.find_elements(By.XPATH, "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'nessuna disponibilit') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'nessun appuntamento') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'non ci sono disponibilit') or contains(@class, 'modal-title') and contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'attenzione')]")
             if any(e.is_displayed() for e in error_texts):
                 return "ERROR"
             no_results = driver.find_elements(By.XPATH, "//h5[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'non sono state trovate disponibilit')]")
@@ -507,7 +511,7 @@ def search_in_province(driver, ignored_exceptions, province_name, search_prefere
                 provincia_selects = driver.find_elements(By.CSS_SELECTOR, "select[id='provincia']")
                 provincia_select = next((s for s in provincia_selects if s.is_displayed()), None)
             if provincia_select is None:
-                raise PortalChanged("select#provincia", "modulo di ricerca", page_snippet(driver))
+                raise_missing(driver, "select#provincia", "modulo di ricerca")
 
         log.debug(f"5. Seleziono la provincia: {province_name}...")
         element = Select(provincia_select)
@@ -555,7 +559,7 @@ def search_in_province(driver, ignored_exceptions, province_name, search_prefere
             submit_btns = driver.find_elements(By.CSS_SELECTOR, ".submit")
             submit_btn = next((b for b in submit_btns if b.is_displayed()), None)
             if submit_btn is None:
-                raise PortalChanged(".submit", "pulsante di ricerca", page_snippet(driver))
+                raise_missing(driver, ".submit", "pulsante di ricerca")
             log.debug("-> Trovato pulsante 'Cerca'. Clicco...")
             driver.execute_script("arguments[0].click();", submit_btn)
         
@@ -600,6 +604,26 @@ def apply_portal_hints(driver, hints):
         _set_checkbox(driver, "pomeriggio", hints.afternoon)
     except WebDriverException as e:
         log.debug(f"-> Filtri giorni/fasce del portale non applicati: {str(e)[:100]}")
+
+
+def no_availability_message(driver):
+    """Text of a visible portal popup saying there is nothing bookable online, or None."""
+    for modal in visible_elements(driver, ".modal-dialog"):
+        try:
+            text = " ".join(modal.text.split())
+        except StaleElementReferenceException:
+            continue
+        if any(marker in text.lower() for marker in NO_AVAILABILITY_MARKERS):
+            return text[:300]
+    return None
+
+
+def raise_missing(driver, selector, step):
+    """An expected element is missing: a "no availability" popup explains it, otherwise the portal changed."""
+    message = no_availability_message(driver)
+    if message:
+        raise NoAvailability(message)
+    raise PortalChanged(selector, step, page_snippet(driver))
 
 
 def page_snippet(driver, limit=1500):
@@ -674,6 +698,8 @@ def detect_booking_mode(driver, timeout=45):
             for modal in visible_elements(driver, ".modal-dialog"):
                 text = modal.text.strip()
                 titles = [t.text.strip().lower() for t in modal.find_elements(By.CSS_SELECTOR, ".modal-title")]
+                if any(marker in text.lower() for marker in NO_AVAILABILITY_MARKERS):
+                    raise NoAvailability(" ".join(text.split())[:300])
                 if any("errore" in t or "attenzione" in t for t in titles):
                     raise LoginRejected(text.replace("\n", " ")[:400])
                 if text not in reported_popups:

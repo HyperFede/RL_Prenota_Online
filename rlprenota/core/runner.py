@@ -6,7 +6,7 @@ from selenium.common.exceptions import NoSuchElementException, StaleElementRefer
 
 from rlprenota.core import portal
 from rlprenota.core.decisions import ACCEPT, BOOKED, EXPIRED, REJECT
-from rlprenota.core.errors import PortalError
+from rlprenota.core.errors import NoAvailability, PortalError
 from rlprenota.core.filters import Verdict
 
 log = logging.getLogger(__name__)
@@ -178,12 +178,28 @@ def run_cycle(session):
     PortalError subclasses propagate: the caller decides about retries and alerts."""
     driver, ignored_exceptions = session.driver, session.ignored_exceptions
     hints = session.filter.portal_hints()
+    just_reopened = False
     for prov in session.provinces():
         log.info(f"\n>>> Ricerca nella provincia: {prov} <<<")
         if session.before_search:
             session.before_search()
 
-        if not portal.search_in_province(driver, ignored_exceptions, prov, session.prefs, hints):
+        try:
+            searched = portal.search_in_province(driver, ignored_exceptions, prov, session.prefs, hints)
+        except NoAvailability as e:
+            # The portal says there's nothing online right now and drops the search form: a normal result.
+            log.info(f"-> {prov}: il portale non ha disponibilità online al momento ({e}).")
+            if just_reopened:
+                return CONTINUE   # still nothing right after a fresh login: try again at the next interval
+            try:
+                session.open(attempts=3)
+            except NoAvailability:
+                return CONTINUE
+            just_reopened = True
+            continue
+        just_reopened = False
+
+        if not searched:
             log.info(f"Ricerca in {prov} interrotta a causa di un errore temporaneo nel form.")
             portal.cleanup_ui_for_next_search(driver, ignored_exceptions)
             continue
@@ -217,8 +233,14 @@ def search_loop(session):
     while True:
         log.info(f"\n=============================================\n   INIZIO CICLO DI RICERCA GLOBALE #{iteration}\n"
                  f"=============================================")
-        if run_cycle(session) == STOP:
-            return
+        try:
+            if session.mode is None:
+                session.open()
+            if run_cycle(session) == STOP:
+                return
+        except NoAvailability as e:
+            log.info(f"Al momento il portale non ha disponibilità online ({e}). Riprovo più tardi.")
+            session.mode = None
         log.info(f"\n   FINE CICLO #{iteration}: pausa di {session.prefs.refresh_frequency} secondi prima di ricominciare...")
         session.decider.idle(session, session.prefs.refresh_frequency)
         iteration += 1
