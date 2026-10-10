@@ -178,8 +178,10 @@ def run_cycle(session):
     PortalError subclasses propagate: the caller decides about retries and alerts."""
     driver, ignored_exceptions = session.driver, session.ignored_exceptions
     hints = session.filter.portal_hints()
-    just_reopened = False
-    for prov in session.provinces():
+    provinces = list(session.provinces())
+    index, retried, fresh_login, skipped_in_a_row = 0, False, False, 0
+    while index < len(provinces):
+        prov = provinces[index]
         log.info(f"\n>>> Ricerca nella provincia: {prov} <<<")
         if session.before_search:
             session.before_search()
@@ -189,15 +191,21 @@ def run_cycle(session):
         except NoAvailability as e:
             # The portal says there's nothing online right now and drops the search form: a normal result.
             log.info(f"-> {prov}: il portale non ha disponibilità online al momento ({e}).")
-            if just_reopened:
-                return CONTINUE   # still nothing right after a fresh login: try again at the next interval
+            if fresh_login and not retried and skipped_in_a_row:
+                return CONTINUE   # refused again right after a fresh login: the portal has nothing now, retry later
+            if retried:
+                index, retried = index + 1, False   # refused twice: skip this province
+                skipped_in_a_row += 1
+            else:
+                retried = True                      # log in again to get the form back, then retry this province
             try:
                 session.open(attempts=3)
             except NoAvailability:
                 return CONTINUE
-            just_reopened = True
+            fresh_login = True
             continue
-        just_reopened = False
+        fresh_login, retried, skipped_in_a_row = False, False, 0
+        index += 1
 
         if not searched:
             log.info(f"Ricerca in {prov} interrotta a causa di un errore temporaneo nel form.")
