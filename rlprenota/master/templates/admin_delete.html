@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Elimina account · RL Prenota Online{% endblock %}
+{% block nav %}<a href="{{ base }}/">Panoramica</a>{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Eliminare {{ target.display_name }}?</h1>
+  {% if is_self %}
+    <p>Non puoi eliminare il tuo account.</p>
+  {% else %}
+    <p>Verranno cancellati definitivamente l'account, il collegamento Telegram, i dispositivi collegati e
+       {{ searches }} ricerc{{ "a" if searches == 1 else "he" }} con i relativi dati personali. L'operazione non si può annullare.</p>
+    <form method="post" action="{{ base }}/users/{{ target.id }}/delete" class="actions">
+      <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+      <button class="danger">Elimina definitivamente</button>
+      <a class="button secondary" href="{{ base }}/">Annulla</a>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

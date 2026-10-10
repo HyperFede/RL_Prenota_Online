@@ -121,3 +121,84 @@ def test_admin_actions_need_csrf(client, auth, notifier):
     login(client, auth, notifier, "fede", 9000, admin=True)
     assert client.post("/admin/global/resume", data={}).status_code == 403
     assert client.post("/admin/invite", data={"name": "X", "login": "xyz"}).status_code == 403
+
+
+# --- invites, roles and account deletion (bugs found in production) ---
+
+def invite(client, name="Massi", login_name="massi", role=None):
+    data = {"name": name, "login": login_name, "csrf": csrf(client)}
+    if role is not None:
+        data["role"] = role
+    return client.post("/admin/invite", data=data)
+
+
+def test_invite_role_is_explicit_and_defaults_to_user(client, auth, notifier, db):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    response = invite(client)
+    assert response.status_code == 200 and "Utente" in response.text
+    assert db.query_one("SELECT is_admin FROM users WHERE display_name = 'Massi'")["is_admin"] == 0
+    invite(client, "Luca", "luca", role="admin")
+    assert db.query_one("SELECT is_admin FROM users WHERE display_name = 'Luca'")["is_admin"] == 1
+    assert invite(client, "Strano", "strano", role="root").status_code == 422
+    # The old checkbox can't sneak admin rights in anymore
+    client.post("/admin/invite", data={"name": "X", "login": "xxx", "admin": "on", "csrf": csrf(client)})
+    assert db.query_one("SELECT is_admin FROM users WHERE display_name = 'X'")["is_admin"] == 0
+
+
+def test_invite_result_does_not_auto_refresh_into_a_blank_page(client, auth, notifier):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    page = invite(client).text
+    assert 'http-equiv="refresh"' not in page and "https://t.me/RLBot?start=" in page
+    reloaded = client.get("/admin/invite")
+    assert reloaded.status_code == 303 and reloaded.headers["location"] == "/admin/"
+
+
+def test_lost_link_can_be_regenerated_and_the_old_one_dies(client, auth, notifier, db):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    first = re.search(r"start=([\w-]+)", invite(client).text).group(1)
+    user_id = db.query_one("SELECT id FROM users WHERE display_name = 'Massi'")["id"]
+    assert "Nuovo link" in client.get("/admin/").text
+    second = re.search(r"start=([\w-]+)", client.post(f"/admin/users/{user_id}/invite", data={"csrf": csrf(client)}).text).group(1)
+    assert second != first
+    with pytest.raises(Exception):
+        auth.redeem_invite(first, chat_id=7777, username=None)      # superseded
+    assert auth.redeem_invite(second, chat_id=7777, username=None) == user_id
+    # Linked users don't get new links (that would let someone else take over the account)
+    assert client.post(f"/admin/users/{user_id}/invite", data={"csrf": csrf(client)}).status_code == 409
+
+
+def test_change_role(client, auth, notifier, db):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    invite(client, role="admin")
+    user_id = db.query_one("SELECT id FROM users WHERE display_name = 'Massi'")["id"]
+    client.post(f"/admin/users/{user_id}/role", data={"role": "user", "csrf": csrf(client)})
+    assert db.query_one("SELECT is_admin FROM users WHERE id = ?", (user_id,))["is_admin"] == 0
+    me = auth.user_by_chat(9000)
+    assert client.post(f"/admin/users/{me}/role", data={"role": "user", "csrf": csrf(client)}).status_code == 422
+    assert db.query_one("SELECT is_admin FROM users WHERE id = ?", (me,))["is_admin"] == 1
+
+
+def test_delete_account_removes_everything_after_confirmation(client, auth, notifier, services, db):
+    login(client, auth, notifier, "mario", 1111, admin=False)
+    user = auth.user_by_chat(1111)
+    form = {"label": "V", "location_mode": "provinces", "province": ["BERGAMO"], "end_date": "2099-12-31"}
+    search_id = services.searches.create(user, SearchSettings.from_form(form, today=date(2026, 10, 9)), SECRETS)
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    confirm = client.get(f"/admin/users/{user}/delete")
+    assert confirm.status_code == 200 and "Mario" in confirm.text and "1 ricerc" in confirm.text
+    assert db.query_one("SELECT id FROM users WHERE id = ?", (user,)) is not None   # nothing deleted by the GET
+    response = client.post(f"/admin/users/{user}/delete", data={"csrf": csrf(client)})
+    assert response.status_code == 303
+    assert db.query_one("SELECT id FROM users WHERE id = ?", (user,)) is None
+    assert db.query_one("SELECT id FROM searches WHERE id = ?", (search_id,)) is None
+    assert db.query("SELECT * FROM sessions WHERE user_id = ?", (user,)) == []
+    assert auth.user_by_chat(1111) is None
+
+
+def test_cannot_delete_yourself_or_unknown_users(client, auth, notifier):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    me = auth.user_by_chat(9000)
+    assert client.post(f"/admin/users/{me}/delete", data={"csrf": csrf(client)}).status_code == 422
+    assert client.get("/admin/users/999/delete").status_code == 404
+    assert client.post("/admin/users/999/delete", data={"csrf": csrf(client)}).status_code == 404
+    assert client.post(f"/admin/users/{me}/delete", data={}).status_code == 403

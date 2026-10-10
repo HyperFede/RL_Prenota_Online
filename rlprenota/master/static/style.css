@@ -48,3 +48,5 @@ table { width: 100%; border-collapse: collapse; font-size: .92em; }
 th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 code.wrap { word-break: break-all; }
 .row > button, .row > .button { flex: 0 0 auto; align-self: flex-end; margin-bottom: .5rem; }
+td.actions { display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
+a.danger-link { color: var(--danger); }
