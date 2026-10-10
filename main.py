@@ -11,7 +11,7 @@ from selenium.common.exceptions import NoSuchElementException, StaleElementRefer
 from rlprenota.core import portal
 from rlprenota.core.deciders import TelegramDecider, TerminalDecider
 from rlprenota.core.decisions import DecisionStore
-from rlprenota.core.errors import PortalError
+from rlprenota.core.errors import NoAvailability, PortalError
 from rlprenota.core.models import Patient, Prescription, SearchPreferences
 from rlprenota.core.redact import RedactingFilter
 from rlprenota.core.runner import SearchSession, search_loop
@@ -149,7 +149,10 @@ def main():
                             ignored_exceptions, ask=input)
 
     try:
-        session.open()
+        try:
+            session.open()
+        except NoAvailability as e:
+            print(f"Al momento il portale non ha disponibilità online ({e}): continuo a controllare.")
         where = ", ".join(session.provinces())
         if session.mode == portal.MODE_RESCHEDULE:
             decider.notify(f"🔎 Ricerca avviata: cerco una data precedente al {session.current_appointment.date} in {where}.")

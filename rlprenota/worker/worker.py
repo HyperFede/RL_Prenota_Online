@@ -10,7 +10,7 @@ import time
 
 from rlprenota.core.deciders import Decider
 from rlprenota.core.decisions import MemoryDecisionStore
-from rlprenota.core.errors import ErrorKind, PortalChanged, classify
+from rlprenota.core.errors import ErrorKind, NoAvailability, PortalChanged, classify
 from rlprenota.core.models import Patient, Prescription
 from rlprenota.core.redact import redact
 from rlprenota.core.runner import STOP, SearchSession, run_cycle
@@ -185,6 +185,9 @@ class Worker:
         except LeaseLost:
             log.warning("Lease perso durante la ricerca: risultato scartato")
             return True
+        except NoAvailability:
+            # Normal: nothing bookable online right now (e.g. right after login). Not an error.
+            result = {"outcome": "continue", "message": "Al momento il portale non ha disponibilità online: continuo a controllare"}
         except Exception as e:
             kind = ErrorKind.TRANSIENT if watchdog.fired else classify(e)
             result = {"outcome": "error", "error_kind": kind.value, "message": redact(str(e))[:300]}

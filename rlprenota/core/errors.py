@@ -31,6 +31,10 @@ class LoginRejected(PortalError):
     pass
 
 
+class NoAvailability(PortalError):
+    """The portal answered that there is nothing bookable online right now: a normal result, retried later."""
+
+
 class PortalThrottled(PortalError):
     pass
 
