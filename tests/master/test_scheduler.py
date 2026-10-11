@@ -97,19 +97,20 @@ def test_oldest_due_first(scheduler, repo, user, clock):
     assert scheduler.lease("w2").search_id == second
 
 
-def test_transient_errors_back_off_then_circuit_breaker(scheduler, repo, user, clock, alerts, db):
+def test_transient_errors_back_off_but_never_pause_the_search(scheduler, repo, user, clock, alerts, db):
+    """Session drops and portal hiccups are normal: keep retrying (max 8 min apart), tell the admin once."""
     search_id = repo.create(user, settings(), SECRETS)
     waits = []
-    for _ in range(5):
+    for _ in range(12):
         lease = scheduler.lease("w1")
         assert lease is not None
         scheduler.complete(lease.lease_id, outcome="error", error_kind="transient", message="timeout", duration=5)
         row = db.query_one("SELECT next_run_at, status FROM searches WHERE id = ?", (search_id,))
         waits.append(row["next_run_at"] - clock())
         clock.advance(row["next_run_at"] - clock() + 1)
-    assert waits[:4] == [60, 120, 240, 480]
-    assert repo.get(user, search_id).status == "error"        # 5th consecutive failure: paused
-    assert alerts.user and alerts.admin
+    assert waits[:5] == [60, 120, 240, 480, 480] and max(waits) == 480
+    assert repo.get(user, search_id).status == "active"         # still searching
+    assert len(alerts.admin) == 1 and not alerts.user            # one heads-up to the admin, nothing to the user
 
 
 def test_success_resets_failures(scheduler, repo, user, clock, db):
@@ -131,15 +132,16 @@ def test_login_rejected_pauses_and_tells_the_user(scheduler, repo, user, alerts)
     assert "Ricetta scaduta" in alerts.user[-1][1] and not alerts.admin
 
 
-def test_portal_change_on_two_searches_pauses_everything(scheduler, repo, user, auth, clock, alerts):
+def test_portal_change_needs_three_searches_to_pause_everything(scheduler, repo, user, auth, clock, alerts):
     other = auth.redeem_invite(auth.create_invite("Luigi", login_name="luigi"), 2222, None)
-    repo.create(user, settings(), SECRETS)
-    repo.create(other, settings(), SECRETS)
-    lease = scheduler.lease("w1")
-    scheduler.complete(lease.lease_id, outcome="error", error_kind="portal_changed", message="x", selector="select#provincia",
-                       step="ricerca", duration=5)
-    assert not scheduler.globally_paused() and not alerts.admin
-    lease = scheduler.lease("w2")
+    for owner in (user, other, other):
+        repo.create(owner, settings(), SECRETS)
+    for worker in ("w1", "w2"):
+        lease = scheduler.lease(worker)
+        scheduler.complete(lease.lease_id, outcome="error", error_kind="portal_changed", message="x",
+                           selector="select#provincia", step="ricerca", duration=5)
+    assert not scheduler.globally_paused() and not alerts.admin   # two searches with a bad night: keep going
+    lease = scheduler.lease("w3")
     scheduler.complete(lease.lease_id, outcome="error", error_kind="portal_changed", message="x", selector="select#provincia",
                        step="ricerca", duration=5)
     assert scheduler.globally_paused()

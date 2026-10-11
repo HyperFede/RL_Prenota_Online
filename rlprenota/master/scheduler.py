@@ -20,9 +20,9 @@ from rlprenota.master.validation import SearchSettings
 
 LEASE_TTL_SECONDS = 120
 MAX_BACKOFF_SECONDS = 480
-CIRCUIT_BREAKER_FAILURES = 5
+ADMIN_ALERT_FAILURES = 10          # one heads-up to the admin; the search keeps running
 PORTAL_CHANGE_WINDOW_SECONDS = 30 * 60
-PORTAL_CHANGE_SEARCHES = 2
+PORTAL_CHANGE_SEARCHES = 3
 THROTTLE_PAUSE_SECONDS = 10 * 60
 PORTAL_SEARCH_SPACING_SECONDS = 3.0
 
@@ -162,19 +162,15 @@ class Scheduler:
                              "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(now + THROTTLE_PAUSE_SECONDS),))
                 admin = ("throttled", f"⏸ Il portale sta limitando le richieste ({message}). Ricerche sospese per 10 minuti.")
             else:
+                # Temporary problems (session ended, portal slow or in maintenance) never stop a search
                 failures = row["consecutive_failures"] + 1
-                if failures >= CIRCUIT_BREAKER_FAILURES:
-                    conn.execute("""UPDATE searches SET status = 'error', consecutive_failures = ?, last_run_at = ?,
-                                    last_result = ? WHERE id = ?""",
-                                 (failures, now, f"Sospesa dopo {failures} errori consecutivi", search_id))
-                    notify = (f"⚠️ La ricerca «{settings.label}» è stata sospesa dopo {failures} errori consecutivi. "
-                              "L'amministratore è stato avvisato; puoi riprenderla dalla pagina web.")
-                    admin = (f"breaker:{search_id}", f"🔴 Ricerca {search_id} sospesa dopo {failures} errori ({error_kind}): {message[:200]}")
-                else:
-                    wait = min(MAX_BACKOFF_SECONDS, 60 * 2 ** (failures - 1))
-                    conn.execute("""UPDATE searches SET consecutive_failures = ?, last_run_at = ?, last_result = ?,
-                                    next_run_at = ? WHERE id = ?""",
-                                 (failures, now, "Errore temporaneo, nuovo tentativo a breve", now + wait, search_id))
+                wait = min(MAX_BACKOFF_SECONDS, 60 * 2 ** (failures - 1))
+                conn.execute("""UPDATE searches SET consecutive_failures = ?, last_run_at = ?, last_result = ?,
+                                next_run_at = ? WHERE id = ?""",
+                             (failures, now, "Problema temporaneo del portale, nuovo tentativo a breve", now + wait, search_id))
+                if failures == ADMIN_ALERT_FAILURES:
+                    admin = (f"failing:{search_id}", f"⚠️ La ricerca «{settings.label}» non riesce da {failures} tentativi "
+                                                     f"({error_kind}): {message[:200]}. Continua comunque a riprovare.")
             self.db.audit(f"run_{outcome}", user_id, json.dumps({"search": search_id, "kind": error_kind,
                                                                   "duration": round(duration, 1)}), conn=conn)
 

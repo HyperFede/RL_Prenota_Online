@@ -173,7 +173,7 @@ class Worker:
             decider = MasterDecider(self.client, lease_id, settings.telegram_timeout, watchdog)
             session = SearchSession(self.browsers.get(), Prescription(secrets.ricetta, Patient(secrets.codice_fiscale, secrets.tessera)),
                                     prefs, store, decider, before_search=lambda: self.sleep(self.client.permit(lease_id)))
-            session.open()
+            session.open(attempts=2, retry_delay=5)
             outcome = run_cycle(session)
             if outcome == STOP or session.booked_slot is not None:
                 # A completed booking is reported even if the watchdog fired afterwards
