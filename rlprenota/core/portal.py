@@ -8,12 +8,12 @@ import re
 import time
 import unicodedata
 from datetime import datetime
+from types import SimpleNamespace
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
@@ -21,7 +21,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import WebDriverException
 
-from rlprenota.core.errors import ErrorKind, LoginRejected, NoAvailability, PortalChanged, PortalError, classify
+from rlprenota.core.errors import ErrorKind, LoginRejected, NoAvailability, PortalChanged, PortalError, PortalHiccup, classify
 from rlprenota.core.models import Appointment, Slot
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ MODE_RESCHEDULE = "modifica"  # the prescription already has an appointment: loo
 MODE_NEW = "nuova"            # no appointment yet: first-time booking
 
 # Matches "dd/mm/yyyy - HH:MM", "dd/mm/yyyy HH:MM", "dd/mm/yyyy alle HH:MM"...
+# Popup texts after login that really mean "the data entered is wrong" (lower case)
+# ("scaduta" alone is not enough: "la sessione è scaduta" is the portal's fault, not the user's)
+USER_DATA_MARKERS = ("ricetta", "prescrizione non", "codice fiscale", "tessera", "non valid", "non trovat", "erogat",
+                     "gia' prenotat", "già prenotat", "annullat", "inesistent")
+
 # How the portal says "nothing bookable online right now" (popup texts, lower case)
 NO_AVAILABILITY_MARKERS = ("non ci sono disponibilit", "nessuna disponibilit", "non sono state trovate disponibilit",
                            "nessun appuntamento")
@@ -514,14 +519,16 @@ def search_in_province(driver, ignored_exceptions, province_name, search_prefere
                 raise_missing(driver, "select#provincia", "modulo di ricerca")
 
         log.debug(f"5. Seleziono la provincia: {province_name}...")
-        element = Select(provincia_select)
-        available = [o.text.strip() for o in element.options if o.text.strip()]
-        if not available:
-            raise PortalChanged("select#provincia option", "elenco province vuoto", page_snippet(driver))
-        option = match_province_option(element.options, province_name)
+        texts = driver.execute_script(
+            "return Array.prototype.map.call(arguments[0].options, function (o) { return o.textContent.trim(); });",
+            provincia_select) or []
+        if not any(texts):
+            raise PortalHiccup("elenco delle province vuoto")
+        options = [SimpleNamespace(text=t, index=i) for i, t in enumerate(texts)]
+        option = match_province_option(options, province_name)
         if option is None:
-            raise LoginRejected(f"Provincia '{province_name}' non disponibile sul portale. Valori disponibili: {', '.join(available)}")
-        element.select_by_visible_text(option.text)
+            raise PortalHiccup(f"provincia '{province_name}' non trovata nell'elenco del portale")
+        driver.execute_script("arguments[0].selectedIndex = arguments[1];", provincia_select, option.index)
         
         log.debug("-> Eseguo evento Javascript 'change' sul dropdown...")
         driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", provincia_select)
@@ -701,7 +708,10 @@ def detect_booking_mode(driver, timeout=45):
                 if any(marker in text.lower() for marker in NO_AVAILABILITY_MARKERS):
                     raise NoAvailability(" ".join(text.split())[:300])
                 if any("errore" in t or "attenzione" in t for t in titles):
-                    raise LoginRejected(text.replace("\n", " ")[:400])
+                    message = " ".join(text.split())[:400]
+                    if any(marker in message.lower() for marker in USER_DATA_MARKERS):
+                        raise LoginRejected(message)
+                    raise PortalHiccup(message)   # e.g. session expired: not the user's fault, retry
                 if text not in reported_popups:
                     reported_popups.add(text)
                     log.info(f"-> Popup del portale: {text[:200]}")

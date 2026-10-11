@@ -31,6 +31,10 @@ class LoginRejected(PortalError):
     pass
 
 
+class PortalHiccup(PortalError):
+    """The page was not in the expected state for a moment (session ended, page re-rendering): retry."""
+
+
 class NoAvailability(PortalError):
     """The portal answered that there is nothing bookable online right now: a normal result, retried later."""
 
@@ -50,6 +54,8 @@ def classify(error):
         return ErrorKind.LOGIN_REJECTED
     if isinstance(error, PortalThrottled):
         return ErrorKind.THROTTLED
+    if isinstance(error, PortalHiccup):
+        return ErrorKind.TRANSIENT
     if isinstance(error, (TimeoutException, StaleElementReferenceException)):
         return ErrorKind.TRANSIENT
     if isinstance(error, NoSuchElementException):

@@ -135,13 +135,15 @@ def _short_wait_propose():
     return propose
 
 
-def test_portal_change_on_two_searches_alerts_admin_and_pauses(stack, browsers):
-    create(stack)
-    create(stack)
+def test_portal_change_on_three_searches_alerts_admin_and_pauses(stack, browsers):
+    for _ in range(3):
+        create(stack)
     failing = mock.patch.object(portal, "open_search_flow", side_effect=PortalChanged("#cf", "login", "<p>pagina nuova</p>"))
     with failing:
         w = worker(stack, browsers)
         assert w.run_once() and w.run_once()
+        assert not stack["scheduler"].globally_paused()          # two searches are not enough
+        assert w.run_once()
     assert stack["scheduler"].globally_paused()
     admin_texts = [b["text"] for b in stack["fake"].sent_to(9000)]
     assert any("#cf" in t for t in admin_texts)

@@ -6,7 +6,7 @@ from selenium.common.exceptions import NoSuchElementException, StaleElementRefer
 
 from rlprenota.core import portal
 from rlprenota.core.decisions import ACCEPT, BOOKED, EXPIRED, REJECT
-from rlprenota.core.errors import NoAvailability, PortalError
+from rlprenota.core.errors import NoAvailability, PortalChanged, PortalError, PortalHiccup
 from rlprenota.core.filters import Verdict
 
 log = logging.getLogger(__name__)
@@ -40,8 +40,20 @@ class SearchSession:
                 self.mode, self.current_appointment = portal.open_search_flow(
                     self.driver, self.prescription, self.prefs, self.ignored_exceptions, self.ask)
                 return
+            except (PortalChanged, PortalHiccup) as e:
+                # Usually the portal ending the session or loading slowly: start again with a clean page
+                if attempt == attempts:
+                    raise
+                log.info(f"Accesso non riuscito ({str(e)[:150]}): riprovo da capo...")
+                if self.driver is not None:
+                    # Best effort: the next attempt reloads the page anyway
+                    try:
+                        self.driver.delete_all_cookies()
+                    except Exception:
+                        pass
+                time.sleep(retry_delay)
             except PortalError:
-                raise  # retrying won't help: wrong data or a changed portal
+                raise  # wrong data or "no availability": retrying now won't help
             except Exception as e:
                 if attempt == attempts:
                     raise
@@ -188,6 +200,15 @@ def run_cycle(session):
 
         try:
             searched = portal.search_in_province(driver, ignored_exceptions, prov, session.prefs, hints)
+        except (PortalChanged, PortalHiccup) as e:
+            # Most of the time the portal ended the session or reloaded the page: log in again and retry once.
+            if retried:
+                raise    # still wrong right after a fresh login: report it
+            log.info(f"-> {prov}: pagina inattesa ({str(e)[:120]}), accedo di nuovo e riprovo...")
+            retried = True
+            session.open(attempts=3)
+            fresh_login = True
+            continue
         except NoAvailability as e:
             # The portal says there's nothing online right now and drops the search form: a normal result.
             log.info(f"-> {prov}: il portale non ha disponibilità online al momento ({e}).")

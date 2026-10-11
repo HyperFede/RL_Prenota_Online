@@ -41,11 +41,31 @@ def test_search_without_province_select_is_portal_changed(load_html):
     assert raised.value.selector == "select#provincia"
 
 
-def test_unknown_province_needs_user_action(load_html):
+def test_province_missing_from_the_list_is_a_temporary_hiccup(load_html):
+    """Production: the list was being re-rendered and 'COMO' did not match. Never blame the user's data."""
+    from rlprenota.core.errors import PortalHiccup
     driver = load_html(SEARCH_FORM)
-    with pytest.raises(LoginRejected) as raised:
+    with pytest.raises(PortalHiccup):
         portal.search_in_province(driver, IGNORED, "ROMA", PREFS)
-    assert "BERGAMO" in str(raised.value)  # tells the user what is available
+
+
+def test_province_is_found_even_when_its_option_text_is_not_rendered(load_html):
+    driver = load_html(SEARCH_FORM.replace("<option>MILANO CITTA'</option>",
+                                          "<option style=\"display:none\">MILANO CITTA'</option>"))
+    assert portal.search_in_province(driver, IGNORED, "MILANO CITTA'", PREFS) is True
+    assert driver.execute_script("return window.submitted;") == "MILANO CITTA'"
+
+
+def test_only_real_data_problems_after_login_blame_the_user(load_html):
+    from rlprenota.core.errors import PortalHiccup
+    driver = load_html('<div class="modal-dialog"><span class="modal-title">Attenzione</span>'
+                       'La sessione è scaduta, effettua nuovamente l\'accesso</div>')
+    with pytest.raises(PortalHiccup):
+        portal.detect_booking_mode(driver, timeout=2)
+    driver = load_html('<div class="modal-dialog"><span class="modal-title">Attenzione</span>'
+                       'La ricetta indicata non è valida o è scaduta</div>')
+    with pytest.raises(LoginRejected):
+        portal.detect_booking_mode(driver, timeout=2)
 
 
 def test_search_applies_portal_hints_and_submits(load_html):
@@ -70,13 +90,15 @@ def test_run_cycle_rate_limits_and_propagates_portal_changes():
     calls = []
     session = SimpleNamespace(driver=None, ignored_exceptions=IGNORED, prefs=PREFS,
                               filter=SearchPreferences(["BERGAMO", "MILANO CITTA'"], "", "", 60).build_filter(),
-                              before_search=lambda: calls.append("tick"))
+                              before_search=lambda: calls.append("tick"), open=mock.Mock())
     session.provinces = session.filter.provinces_to_search
-    with mock.patch.object(portal, "search_in_province", side_effect=[False, PortalChanged("x", "y")]), \
+    changed = [False, PortalChanged("x", "y"), PortalChanged("x", "y")]
+    with mock.patch.object(portal, "search_in_province", side_effect=changed), \
             mock.patch.object(portal, "cleanup_ui_for_next_search"):
-        with pytest.raises(PortalChanged):
+        with pytest.raises(PortalChanged):   # still missing right after a fresh login
             runner.run_cycle(session)
-    assert calls == ["tick", "tick"]  # the limiter is consulted before every portal search
+    assert calls == ["tick", "tick", "tick"]  # the limiter is consulted before every portal search
+    session.open.assert_called_once()
 
 
 def test_time_hints_flow_from_preferences():

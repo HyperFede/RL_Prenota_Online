@@ -5,7 +5,7 @@ from unittest import mock
 import pytest
 
 from rlprenota.core import portal, runner
-from rlprenota.core.errors import NoAvailability, PortalChanged
+from rlprenota.core.errors import LoginRejected, NoAvailability, PortalChanged
 from rlprenota.core.models import SearchPreferences
 
 IGNORED = runner.DEFAULT_IGNORED
@@ -104,3 +104,40 @@ def test_cli_loop_keeps_trying_when_the_portal_says_no_at_login():
     with mock.patch.object(runner, "run_cycle", side_effect=[runner.STOP]):
         runner.search_loop(s)        # first login said "no availability", the second worked and the cycle booked
     assert opens == []
+
+
+# --- session drops: a missing element mid-run means "log in again", not "the portal changed" ---
+
+def test_missing_element_mid_run_relogs_and_retries_the_province():
+    s = session_for(["BERGAMO", "COMO", "LECCO"])
+    calls = [True, PortalChanged(".submit", "pulsante di ricerca"), True, True]
+    with mock.patch.object(portal, "search_in_province", side_effect=calls) as search, \
+            mock.patch.object(portal, "check_search_outcome", return_value="ERROR"), \
+            mock.patch.object(portal, "cleanup_ui_for_next_search"):
+        assert runner.run_cycle(s) == runner.CONTINUE
+    assert [c.args[2] for c in search.call_args_list] == ["BERGAMO", "COMO", "COMO", "LECCO"]
+    s.open.assert_called_once_with(attempts=3)
+
+
+def test_missing_element_again_right_after_a_fresh_login_is_reported():
+    s = session_for(["BERGAMO", "COMO"])
+    calls = [True, PortalChanged("select#provincia", "x"), PortalChanged("select#provincia", "x")]
+    with mock.patch.object(portal, "search_in_province", side_effect=calls), \
+            mock.patch.object(portal, "check_search_outcome", return_value="ERROR"), \
+            mock.patch.object(portal, "cleanup_ui_for_next_search"):
+        with pytest.raises(PortalChanged):
+            runner.run_cycle(s)
+
+
+def test_login_is_retried_once_before_counting_as_a_failure():
+    from rlprenota.core.runner import SearchSession
+    flow = mock.Mock(side_effect=[PortalChanged("#cf", "login"), (portal.MODE_RESCHEDULE, None)])
+    s = SearchSession(None, None, PREFS, store=None, decider=None)
+    with mock.patch.object(portal, "open_search_flow", flow):
+        s.open(attempts=2, retry_delay=0)
+    assert flow.call_count == 2 and s.mode == portal.MODE_RESCHEDULE
+    rejected = mock.Mock(side_effect=LoginRejected("Ricetta scaduta"))
+    with mock.patch.object(portal, "open_search_flow", rejected):
+        with pytest.raises(LoginRejected):
+            s.open(attempts=2, retry_delay=0)
+    assert rejected.call_count == 1          # real data problems are not retried
