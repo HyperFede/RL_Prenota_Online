@@ -320,6 +320,8 @@ def create_user_app(services, prefix):
         view = searches.get(user.user_id, search_id)
         if view is None:
             return bare_404()
+        if view.ended:
+            return redirect(f"searches/{search_id}")
         s = view.settings
         values = {"label": s.label, "location_mode": s.location_mode, "province": s.province, "home_comune": s.home_comune,
                   "max_km": str(s.max_km or ""), "facilities": "\n".join(f"{f['name']} | {f['province']}".rstrip(" |")
@@ -339,6 +341,8 @@ def create_user_app(services, prefix):
         view = searches.get(user.user_id, search_id)
         if view is None:
             return bare_404()
+        if view.ended:
+            return redirect(f"searches/{search_id}")
         changed_secrets = {k: form.get(k) for k in SECRET_FIELDS if (form.get(k) or "").strip()}
         try:
             settings = SearchSettings.from_form(form, today=date.today())

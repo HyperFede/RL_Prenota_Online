@@ -203,6 +203,9 @@ class Worker:
 
         if session is not None and session.current_appointment is not None:
             result["current_appointment"] = session.current_appointment.date
+        elif session is not None and session.booked_slot is not None:
+            # First booking: the new appointment becomes the one a continued search must beat
+            result["current_appointment"] = session.booked_slot.appointment_date_str
         result["duration"] = time.monotonic() - started - (decider.waited if decider else 0)
         try:
             self.client.complete(lease_id, **result)

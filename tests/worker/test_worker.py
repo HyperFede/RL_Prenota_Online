@@ -4,7 +4,7 @@ import os
 import socket
 import threading
 import time
-from datetime import date
+from datetime import date, datetime
 from unittest import mock
 
 import pytest
@@ -44,7 +44,7 @@ def stack(db, crypto, tmp_path):
     gateway = BotGateway(TelegramBot("TOKEN", "", api_url=fake.url), None, public_url="https://x/p/")
     auth = AuthService(db, crypto, gateway)
     gateway.auth = auth
-    searches = SearchRepo(db, crypto)
+    searches = SearchRepo(db, crypto, clock=lambda: datetime(2026, 10, 9, 12).timestamp())  # slots below are ahead
     router = ProposalRouter(db, auth, searches, gateway)
     gateway.decision_handler = router.handle_answer
     scheduler = Scheduler(db, searches, router, workers=1)
@@ -105,7 +105,8 @@ def test_proposal_accepted_on_telegram_is_booked(stack, browsers):
         assert worker(stack, browsers).run_once() is True
     view = stack["searches"].get(stack["owner"], search_id)
     assert view.status == "booked" and "05/11/2026 08:30" in view.last_result
-    assert stack["searches"].secrets_for(search_id) is None            # personal data wiped
+    assert view.current_appointment == "05/11/2026 - 08:30"            # what a continued search must beat
+    assert stack["searches"].secrets_for(search_id) is not None        # kept until then, for the admin's "continua"
     texts = [b["text"] for b in stack["fake"].sent_to(5555)]
     assert any("Ospedale Niguarda" in t and "08:30" in t for t in texts)
     assert any("PRENOTATO" in b["text"] for m, b in stack["fake"].requests if m == "editMessageText")

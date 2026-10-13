@@ -196,6 +196,23 @@ def test_pause_resume_delete(client, auth, notifier, services):
     assert services.searches.get(1, search_id) is None
 
 
+def test_a_closed_search_with_kept_data_is_read_only_for_its_owner(client, auth, notifier, services):
+    logged_in(client, auth, notifier)
+    search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
+    with services.db.tx() as conn:
+        conn.execute("UPDATE searches SET current_appointment = '20/02/2027 - 10:00' WHERE id = ?", (search_id,))
+    services.searches.finish(search_id, "booked", "Prenotato")
+    assert services.searches.secrets_for(search_id) is not None       # kept for the admin's "continua"
+    page = client.get(url(f"searches/{search_id}")).text
+    assert f"searches/{search_id}/resume" not in page and f"searches/{search_id}/edit" not in page
+    token = csrf(client, "")
+    client.post(url(f"searches/{search_id}/resume"), data={"csrf": token})
+    client.post(url(f"searches/{search_id}/pause"), data={"csrf": token})
+    assert client.get(url(f"searches/{search_id}/edit")).status_code == 303
+    assert client.post(url(f"searches/{search_id}/edit"), data={**SEARCH_FORM, "csrf": token}).status_code == 303
+    assert services.searches.get(1, search_id).status == "booked"
+
+
 def test_changing_personal_data_needs_a_recent_telegram_confirmation(client, auth, notifier, services, clock):
     logged_in(client, auth, notifier)
     search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]

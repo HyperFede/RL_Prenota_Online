@@ -85,12 +85,109 @@ def test_update_keeps_secrets_unless_replaced(repo, two_users):
 def test_finished_searches_lose_their_secrets(repo, two_users, db):
     a, _ = two_users
     search_id = repo.create(a, settings(), SECRETS)
-    repo.finish(search_id, "booked", "Prenotato il 05/11/2026 08:30")
+    repo.finish(search_id, "booked", "Prenotato il 05/11/2026 08:30")      # appointment unknown: nothing to continue
     assert repo.secrets_for(search_id) is None
     view = repo.get(a, search_id)
     assert view.status == "booked" and "05/11/2026" in view.last_result
     with pytest.raises(LimitReached):  # can't resume without data
         repo.resume(a, search_id)
+
+
+def execute(db, sql, params):
+    with db.tx() as conn:
+        conn.execute(sql, params)
+
+
+def booked(repo, db, user, appointment, end_date="2027-12-31"):
+    search_id = repo.create(user, settings(end_date=end_date), SECRETS)
+    execute(db, "UPDATE searches SET current_appointment = ? WHERE id = ?", (appointment, search_id))
+    repo.finish(search_id, "booked", f"Prenotato: {appointment}")
+    return search_id
+
+
+def row(db, search_id):
+    return db.query_one("SELECT * FROM searches WHERE id = ?", (search_id,))
+
+
+# clock() is 15/01/2027 09:00 in Rome (08:00 UTC)
+
+def test_booked_search_keeps_its_secrets_until_the_appointment(repo, two_users, db, clock):
+    a, _ = two_users
+    search_id = booked(repo, db, a, "20/02/2027 - 10:00")
+    assert repo.secrets_for(search_id) == SECRETS and repo.get(a, search_id).ended
+    repo.expire_finished(today=date(2027, 1, 15))
+    assert repo.secrets_for(search_id) == SECRETS
+    clock.advance(40 * 86400)                       # 24/02: the appointment is past
+    repo.expire_finished(today=date(2027, 2, 24))
+    assert repo.secrets_for(search_id) is None and repo.get(a, search_id).status == "booked"
+
+
+def test_past_appointment_wipes_at_once(repo, two_users, db):
+    a, _ = two_users
+    assert repo.secrets_for(booked(repo, db, a, "10/01/2027 - 10:00")) is None
+
+
+def test_users_cannot_resume_pause_or_edit_a_closed_search(repo, two_users, db):
+    a, _ = two_users
+    search_id = booked(repo, db, a, "20/02/2027 - 10:00")
+    with pytest.raises(LimitReached):
+        repo.resume(a, search_id)
+    with pytest.raises(LimitReached):
+        repo.update(a, search_id, settings())
+    repo.pause(a, search_id)
+    assert repo.get(a, search_id).status == "booked"
+
+
+def test_admin_continues_a_booked_search_before_its_appointment(repo, two_users, db):
+    a, b = two_users
+    search_id = booked(repo, db, a, "20/02/2027 - 10:00")
+    assert repo.continuable(row(db, search_id), today=date(2027, 1, 15)) == ""
+    repo.reopen(search_id, b, today=date(2027, 1, 15))
+    view = repo.get(a, search_id)
+    assert view.status == "active" and view.current_appointment == "20/02/2027 - 10:00"
+    assert db.query_one("SELECT user_id FROM audit WHERE action = 'search_reopened'")["user_id"] == b
+
+
+@pytest.mark.parametrize("appointment, end_date, reason", [
+    ("10/01/2027 - 10:00", "2027-12-31", "già passata"),      # appointment past (secrets wiped too)
+    ("15/01/2027 - 07:30", "2027-12-31", "già passata"),      # earlier the same day
+    ("", "2027-12-31", "non è nota"),                          # never knew the appointment
+    ("20/02/2027 - 10:00", "2027-01-10", "data di fine"),     # nothing left to search
+])
+def test_closed_search_cannot_continue(repo, two_users, db, appointment, end_date, reason):
+    a, b = two_users
+    search_id = booked(repo, db, a, appointment, end_date=end_date)
+    assert reason in repo.continuable(row(db, search_id), today=date(2027, 1, 15))
+    with pytest.raises(LimitReached, match=reason):
+        repo.reopen(search_id, b, today=date(2027, 1, 15))
+    assert repo.get(a, search_id).status == "booked"
+
+
+def test_continue_respects_limits_and_running_searches(repo, two_users, db):
+    a, b = two_users
+    search_id = booked(repo, db, a, "20/02/2027 - 10:00")
+    for _ in range(3):
+        repo.create(a, settings(), SECRETS)
+    with pytest.raises(LimitReached, match="al massimo"):
+        repo.reopen(search_id, b, today=date(2027, 1, 15))
+    active = next(v.id for v in repo.list_for_user(a) if v.status == "active")
+    with pytest.raises(LimitReached, match="non è conclusa"):
+        repo.reopen(active, b, today=date(2027, 1, 15))
+    with pytest.raises(NotFound):
+        repo.reopen("missing", b)
+
+
+def test_expired_by_end_date_is_wiped_but_idle_one_can_continue(repo, two_users, db, clock):
+    a, _ = two_users
+    past_end = repo.create(a, settings(end_date="2027-01-10"), SECRETS)
+    idle = repo.create(a, settings(end_date="2027-12-31"), SECRETS)
+    for search_id in (past_end, idle):
+        execute(db, "UPDATE searches SET current_appointment = '20/02/2027 - 10:00' WHERE id = ?", (search_id,))
+    execute(db, "UPDATE searches SET updated_at = ? WHERE id = ?", (clock() - 61 * 86400, idle))
+    assert sorted(repo.expire_finished(today=date(2027, 1, 15))) == sorted([past_end, idle])
+    assert repo.secrets_for(past_end) is None
+    assert repo.secrets_for(idle) == SECRETS
+    assert repo.continuable(row(db, idle), today=date(2027, 1, 15)) == ""
 
 
 def test_expire_past_end_date_and_idle(repo, two_users, clock, db):
