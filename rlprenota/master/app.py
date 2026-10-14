@@ -376,6 +376,7 @@ def create_user_app(services, prefix):
     action("pause", searches.pause)
     action("resume", searches.resume)
     action("delete", searches.delete)
+    action("continue", lambda user_id, search_id: searches.reopen(search_id, user_id, owner_id=user_id))
 
     @app.post(f"{base}/searches/{{search_id}}/undiscard/{{slot_id}}")
     async def undiscard(request: Request, search_id: str, slot_id: str):

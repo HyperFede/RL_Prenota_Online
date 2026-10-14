@@ -33,6 +33,11 @@
       <form method="post" action="{{ base }}/searches/{{ s.id }}/pause"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="secondary">Metti in pausa</button></form>
     {% elif s.has_secrets and not s.ended %}
       <form method="post" action="{{ base }}/searches/{{ s.id }}/resume"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button>Riprendi</button></form>
+    {% elif s.blocked == "" %}
+      <form method="post" action="{{ base }}/searches/{{ s.id }}/continue"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button>Continua la ricerca</button></form>
+      <p class="muted">Cerca un appuntamento prima di quello prenotato ({{ s.current_appointment }}).</p>
+    {% elif s.blocked %}
+      <p class="muted">Non si può continuare: {{ s.blocked }}.</p>
     {% endif %}
     {% if s.has_secrets and not s.ended %}<a class="button secondary" href="{{ base }}/searches/{{ s.id }}/edit">Modifica</a>{% endif %}
     <form method="post" action="{{ base }}/searches/{{ s.id }}/delete"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="danger">Elimina</button></form>

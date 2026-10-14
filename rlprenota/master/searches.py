@@ -95,11 +95,16 @@ class SearchRepo:
 
     def list_for_user(self, user_id):
         rows = self.db.query("SELECT * FROM searches WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
-        return [SearchView(r, self.crypto) for r in rows]
+        return [self._view(r) for r in rows]
 
     def get(self, user_id, search_id):
         row = self.db.query_one("SELECT * FROM searches WHERE id = ? AND user_id = ?", (search_id, user_id))
-        return SearchView(row, self.crypto) if row else None
+        return self._view(row) if row else None
+
+    def _view(self, row):
+        view = SearchView(row, self.crypto)
+        view.blocked = self.continuable(row) if view.ended else None   # "" = the owner may continue it
+        return view
 
     def update(self, user_id, search_id, settings, secrets=None):
         with self.db.tx() as conn:
@@ -218,12 +223,12 @@ class SearchRepo:
             return "La data di fine della ricerca è già passata"
         return ""
 
-    def reopen(self, search_id, actor_id, today=None):
-        """Admin: continue a closed search (booked or expired) while its booked appointment is still ahead.
-        The portal then finds the booking and looks for an earlier slot."""
+    def reopen(self, search_id, actor_id, today=None, owner_id=None):
+        """Continue a closed search (booked or expired) while its booked appointment is still ahead: by the
+        admin, or by its owner (owner_id). The portal then finds the booking and looks for an earlier slot."""
         with self.db.tx() as conn:
             row = conn.execute("SELECT * FROM searches WHERE id = ?", (search_id,)).fetchone()
-            if row is None:
+            if row is None or (owner_id is not None and row["user_id"] != owner_id):
                 raise NotFound()
             reason = self.continuable(row, today)
             if reason:

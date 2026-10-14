@@ -213,6 +213,43 @@ def test_a_closed_search_with_kept_data_is_read_only_for_its_owner(client, auth,
     assert services.searches.get(1, search_id).status == "booked"
 
 
+def booked_search(client, services, appointment):
+    search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
+    with services.db.tx() as conn:
+        conn.execute("UPDATE searches SET current_appointment = ? WHERE id = ?", (appointment, search_id))
+    services.searches.finish(search_id, "booked", "Prenotato")
+    return search_id
+
+
+def test_owner_continues_their_booked_search_before_the_appointment(client, auth, notifier, services):
+    logged_in(client, auth, notifier)
+    search_id = booked_search(client, services, "20/02/2027 - 10:00")    # clock: 15/01/2027
+    page = client.get(url(f"searches/{search_id}")).text
+    assert f"searches/{search_id}/continue" in page and "20/02/2027 - 10:00" in page
+    response = client.post(url(f"searches/{search_id}/continue"), data={"csrf": csrf(client, "")})
+    assert response.status_code == 303
+    assert services.searches.get(1, search_id).status == "active"
+
+
+def test_owner_cannot_continue_after_the_appointment(client, auth, notifier, services):
+    logged_in(client, auth, notifier)
+    search_id = booked_search(client, services, "10/01/2027 - 10:00")
+    page = client.get(url(f"searches/{search_id}")).text
+    assert f"searches/{search_id}/continue" not in page and "già passata" in page
+    response = client.post(url(f"searches/{search_id}/continue"), data={"csrf": csrf(client, "")})
+    assert response.status_code == 409 and "già passata" in response.text
+    assert services.searches.get(1, search_id).status == "booked"
+
+
+def test_nobody_else_can_continue_my_search(client, auth, notifier, services):
+    logged_in(client, auth, notifier)
+    search_id = booked_search(client, services, "20/02/2027 - 10:00")
+    logged_in(client, auth, notifier, name="bruno", chat=2222)
+    response = client.post(url(f"searches/{search_id}/continue"), data={"csrf": csrf(client, "")})
+    assert response.status_code == 404
+    assert services.searches.get(1, search_id).status == "booked"
+
+
 def test_changing_personal_data_needs_a_recent_telegram_confirmation(client, auth, notifier, services, clock):
     logged_in(client, auth, notifier)
     search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
