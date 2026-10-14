@@ -49,8 +49,8 @@ class SearchSession:
                     # Best effort: the next attempt reloads the page anyway
                     try:
                         self.driver.delete_all_cookies()
-                    except Exception:
-                        pass
+                    except Exception as cleanup_error:
+                        log.debug(f"Pulizia dei cookie non riuscita: {type(cleanup_error).__name__}")
                 time.sleep(retry_delay)
             except PortalError:
                 raise  # wrong data or "no availability": retrying now won't help

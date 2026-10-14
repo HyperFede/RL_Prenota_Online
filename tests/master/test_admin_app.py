@@ -217,3 +217,38 @@ def test_reenabling_an_unused_invite_keeps_it_pending(client, auth, notifier, db
     page = client.get("/admin/").text
     row = page[page.index(">Massi<"):][:1500]
     assert "Nuovo link" in row and "invito non ancora usato" in row
+
+
+def closed_search(services, user, appointment, end_date="2099-12-31"):
+    form = {"label": "Visita chirurgica", "location_mode": "provinces", "province": ["COMO"], "end_date": end_date}
+    search_id = services.searches.create(user, SearchSettings.from_form(form, today=date(2026, 10, 9)), SECRETS)
+    with services.db.tx() as conn:
+        conn.execute("UPDATE searches SET current_appointment = ? WHERE id = ?", (appointment, search_id))
+    services.searches.finish(search_id, "booked", f"Prenotato: {appointment}")
+    return search_id
+
+
+def test_admin_continues_a_closed_search_before_the_booked_date(client, auth, notifier, services):
+    login(client, auth, notifier, "mario", 1111, admin=False)
+    owner = auth.user_by_chat(1111)
+    search_id = closed_search(services, owner, "20/02/2027 - 10:00")      # clock: 15/01/2027
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    page = client.get("/admin/").text
+    assert f"/admin/searches/{search_id}/continue" in page and "prima del 20/02/2027 - 10:00" in page
+    response = client.post(f"/admin/searches/{search_id}/continue", data={"csrf": csrf(client)})
+    assert response.status_code == 303
+    view = services.searches.get(owner, search_id)
+    assert view.status == "active" and view.current_appointment == "20/02/2027 - 10:00"
+
+
+def test_closed_search_after_the_booked_date_cannot_continue(client, auth, notifier, services):
+    login(client, auth, notifier, "mario", 1111, admin=False)
+    owner = auth.user_by_chat(1111)
+    search_id = closed_search(services, owner, "10/01/2027 - 10:00")
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    page = client.get("/admin/").text
+    assert f"/admin/searches/{search_id}/continue" not in page and "già passata" in page
+    response = client.post(f"/admin/searches/{search_id}/continue", data={"csrf": csrf(client)})
+    assert response.status_code == 409 and "già passata" in response.text
+    assert services.searches.get(owner, search_id).status == "booked"
+    assert client.post("/admin/searches/missing/continue", data={"csrf": csrf(client)}).status_code == 404

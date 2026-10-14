@@ -85,5 +85,5 @@ Searches survive restarts: leases expire and are requeued.
 
 ## Security notes
 - Health data at rest is encrypted with AES-256-GCM. The key is `secrets/master_key`: **back it up offline**, because without it the database and the backups are unreadable.
-- Personal login data is wiped when a search is booked, expires, or is deleted.
+- Personal login data is wiped when a search is booked, expires, or is deleted. One exception: while a booked appointment is still ahead, the encrypted login data is kept so an admin can press *continua la ricerca* (look for an earlier slot). It is wiped as soon as the appointment date passes, or right away if the search's end date has passed.
 - The `secrets/` folder and `.env` must never be committed. `.gitignore` covers `data_file.py` and `stato_ricerca.json`; deploy secrets live only on the NAS.
