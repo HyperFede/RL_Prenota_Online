@@ -90,7 +90,7 @@
           <form method="post" action="{{ base }}/searches/{{ s.id }}/resume">{{ csrf_field() }}<button class="link">riprendi</button></form>
         {% elif s.blocked == "" %}
           <form method="post" action="{{ base }}/searches/{{ s.id }}/continue">{{ csrf_field() }}<button class="link">continua la ricerca</button></form>
-          <span class="muted">prima del {{ s.current_appointment }}</span>
+          <span class="muted">prima del {{ s.current_appointment }} · possibile fino al {{ s.continue_until | when }}</span>
         {% elif s.blocked %}<span class="muted">{{ s.blocked }}</span>
         {% endif %}</td></tr>
     {% endfor %}

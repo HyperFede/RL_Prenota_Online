@@ -111,15 +111,61 @@ def row(db, search_id):
 
 # clock() is 15/01/2027 09:00 in Rome (08:00 UTC)
 
-def test_booked_search_keeps_its_secrets_until_the_appointment(repo, two_users, db, clock):
+def test_booked_search_keeps_its_secrets_for_48_hours(repo, two_users, db, clock):
     a, _ = two_users
     search_id = booked(repo, db, a, "20/02/2027 - 10:00")
     assert repo.secrets_for(search_id) == SECRETS and repo.get(a, search_id).ended
-    repo.expire_finished(today=date(2027, 1, 15))
+    assert repo.get(a, search_id).continue_until == clock() + 48 * 3600
+    clock.advance(48 * 3600 - 60)                   # 47 h 59 min: still possible
+    repo.expire_finished(today=date(2027, 1, 17))
     assert repo.secrets_for(search_id) == SECRETS
-    clock.advance(40 * 86400)                       # 24/02: the appointment is past
-    repo.expire_finished(today=date(2027, 2, 24))
+    assert repo.continuable(row(db, search_id), today=date(2027, 1, 17)) == ""
+    clock.advance(60)                               # 48 h: the window is over
+    assert "48 ore" in repo.continuable(row(db, search_id), today=date(2027, 1, 17))
+    repo.expire_finished(today=date(2027, 1, 17))
     assert repo.secrets_for(search_id) is None and repo.get(a, search_id).status == "booked"
+    with pytest.raises(LimitReached):
+        repo.reopen(search_id, a, today=date(2027, 1, 17))
+
+
+def test_appointment_passing_inside_the_window_wipes_too(repo, two_users, db, clock):
+    a, _ = two_users
+    search_id = booked(repo, db, a, "16/01/2027 - 10:00")      # tomorrow
+    clock.advance(26 * 3600)                                   # 16/01 11:00
+    assert "già passata" in repo.continuable(row(db, search_id), today=date(2027, 1, 16))
+    repo.expire_finished(today=date(2027, 1, 16))
+    assert repo.secrets_for(search_id) is None
+
+
+def test_continued_then_booked_again_gets_a_new_window(repo, two_users, db, clock):
+    a, _ = two_users
+    search_id = booked(repo, db, a, "20/02/2027 - 10:00")
+    clock.advance(40 * 3600)
+    repo.reopen(search_id, a, today=date(2027, 1, 16), owner_id=a)
+    assert row(db, search_id)["ended_at"] is None
+    execute(db, "UPDATE searches SET current_appointment = '10/02/2027 - 09:00' WHERE id = ?", (search_id,))
+    repo.finish(search_id, "booked", "Prenotato")
+    clock.advance(40 * 3600)                                   # 80 h after the first booking, 40 h after the second
+    repo.expire_finished(today=date(2027, 1, 18))
+    assert repo.continuable(row(db, search_id), today=date(2027, 1, 18)) == ""
+
+
+def test_old_database_gets_the_new_column(tmp_path):
+    import sqlite3
+    from rlprenota.master.db import Database
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE searches (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, status TEXT NOT NULL, "
+                "settings_json TEXT NOT NULL, secrets_enc BLOB, created_at REAL NOT NULL, updated_at REAL NOT NULL, "
+                "next_run_at REAL NOT NULL DEFAULT 0, last_run_at REAL, last_result TEXT NOT NULL DEFAULT '', "
+                "consecutive_failures INTEGER NOT NULL DEFAULT 0, current_appointment TEXT NOT NULL DEFAULT '', "
+                "effective_interval REAL)")
+    old.execute("INSERT INTO searches(id, user_id, status, settings_json, created_at, updated_at) "
+                "VALUES ('s', 1, 'booked', '{}', 0, 0)")
+    old.commit()
+    old.close()
+    db = Database(str(path))
+    assert db.query_one("SELECT ended_at FROM searches WHERE id = 's'")["ended_at"] is None
 
 
 def test_past_appointment_wipes_at_once(repo, two_users, db):

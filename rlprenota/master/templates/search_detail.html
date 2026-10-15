@@ -26,7 +26,7 @@
     <dt>Codice fiscale</dt><dd>{{ s.masked.codice_fiscale }}</dd>
     <dt>Ricetta</dt><dd>{{ s.masked.ricetta }}</dd>
     {% else %}<dt>Dati personali</dt><dd>cancellati (ricerca conclusa)</dd>{% endif %}
-    {% if s.ended and s.has_secrets %}<dt>Dati personali</dt><dd>conservati cifrati fino alla data della prenotazione, poi cancellati</dd>{% endif %}
+    {% if s.ended and s.has_secrets %}<dt>Dati personali</dt><dd>conservati cifrati fino al {{ s.continue_until | when }}, poi cancellati</dd>{% endif %}
   </dl>
   <div class="actions">
     {% if s.status in ("active", "waiting") %}
@@ -35,7 +35,8 @@
       <form method="post" action="{{ base }}/searches/{{ s.id }}/resume"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button>Riprendi</button></form>
     {% elif s.blocked == "" %}
       <form method="post" action="{{ base }}/searches/{{ s.id }}/continue"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button>Continua la ricerca</button></form>
-      <p class="muted">Cerca un appuntamento prima di quello prenotato ({{ s.current_appointment }}).</p>
+      <p class="muted">Cerca un appuntamento prima di quello prenotato ({{ s.current_appointment }}).
+        Puoi farlo fino al {{ s.continue_until | when }}: dopo, i tuoi dati di accesso vengono cancellati.</p>
     {% elif s.blocked %}
       <p class="muted">Non si può continuare: {{ s.blocked }}.</p>
     {% endif %}

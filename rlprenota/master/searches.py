@@ -12,6 +12,7 @@ ENDED = ("booked", "expired")
 DEFAULT_MAX_ACTIVE_PER_USER = 3
 DEFAULT_MAX_ACTIVE_TOTAL = 10
 IDLE_EXPIRY_SECONDS = 60 * 86400
+CONTINUE_WINDOW_SECONDS = 48 * 3600     # after a search ends, its owner or the admin may continue it this long
 
 
 def appointment_datetime(text):
@@ -49,6 +50,7 @@ class SearchView:
         self.effective_interval = row["effective_interval"]
         self.has_secrets = row["secrets_enc"] is not None
         self.ended = self.status in ENDED
+        self.continue_until = row["ended_at"] + CONTINUE_WINDOW_SECONDS if row["ended_at"] else None
         self.masked = (SearchSecrets.from_dict(crypto.decrypt_json(row["secrets_enc"], f"search:{row['id']}")).masked()
                        if self.has_secrets else {})
 
@@ -176,22 +178,24 @@ class SearchRepo:
 
     def finish(self, search_id, status, result="", keep_for_continuation=True):
         """End a search. The personal data needed to log in is wiped, unless the booked appointment is still
-        ahead: until then the admin may continue the search (see reopen), and expire_finished wipes it after."""
+        ahead: then it is kept for CONTINUE_WINDOW_SECONDS, so the search can be continued (see reopen), and
+        expire_finished wipes it when that window closes."""
         if status not in ENDED:
             raise ValueError(status)
         with self.db.tx() as conn:
             row = conn.execute("SELECT current_appointment FROM searches WHERE id = ?", (search_id,)).fetchone()
             keep = keep_for_continuation and row is not None and self._appointment_ahead(row["current_appointment"])
-            conn.execute("""UPDATE searches SET status = ?, last_result = ?, updated_at = ? WHERE id = ?""",
-                         (status, result[:300], self.clock(), search_id))
+            now = self.clock()
+            conn.execute("""UPDATE searches SET status = ?, last_result = ?, updated_at = ?, ended_at = ? WHERE id = ?""",
+                         (status, result[:300], now, now, search_id))
             if not keep:
                 conn.execute("UPDATE searches SET secrets_enc = NULL WHERE id = ?", (search_id,))
             conn.execute("DELETE FROM leases WHERE search_id = ?", (search_id,))
             self.db.audit(f"search_{status}", None, search_id, conn=conn)
 
     def expire_finished(self, today=None):
-        """Searches past their end date, or untouched for 60 days, are closed; ended searches whose appointment
-        has passed lose the secrets they kept for a possible continuation."""
+        """Searches past their end date, or untouched for 60 days, are closed; ended searches lose the secrets
+        they kept for a possible continuation once the 48 h window closes (or the appointment passes)."""
         today = (today or date.today()).isoformat()
         idle_limit = self.clock() - IDLE_EXPIRY_SECONDS
         expired = []
@@ -202,13 +206,16 @@ class SearchRepo:
                 self.finish(row["id"], "expired", "Ricerca conclusa: data di fine superata o inattiva da 60 giorni",
                             keep_for_continuation=not past_end)
                 expired.append(row["id"])
-        for row in self.db.query("""SELECT id, current_appointment FROM searches
+        for row in self.db.query("""SELECT id, current_appointment, ended_at FROM searches
                                     WHERE status IN (?, ?) AND secrets_enc IS NOT NULL""", ENDED):
-            if not self._appointment_ahead(row["current_appointment"]):
+            if not (self._in_window(row) and self._appointment_ahead(row["current_appointment"])):
                 with self.db.tx() as conn:
                     conn.execute("UPDATE searches SET secrets_enc = NULL WHERE id = ?", (row["id"],))
                     self.db.audit("search_secrets_wiped", None, row["id"], conn=conn)
         return expired
+
+    def _in_window(self, row):
+        return row["ended_at"] is not None and self.clock() < row["ended_at"] + CONTINUE_WINDOW_SECONDS
 
     def continuable(self, row, today=None):
         """Why a closed search can't be continued, or "" if it can (row from the searches table)."""
@@ -216,6 +223,8 @@ class SearchRepo:
             return "La ricerca non è conclusa"
         if not self._appointment_ahead(row["current_appointment"]):
             return "La data della prenotazione è già passata (o non è nota)"
+        if not self._in_window(row):
+            return "Sono passate più di 48 ore dalla conclusione: i dati di accesso sono stati cancellati"
         if row["secrets_enc"] is None:
             return "I dati di accesso sono già stati cancellati: serve una nuova ricerca"
         end = json.loads(row["settings_json"]).get("end_date")
@@ -235,8 +244,9 @@ class SearchRepo:
                 raise LimitReached(reason)
             self._check_limits(conn, row["user_id"])
             now = self.clock()
+            who = "dall'amministratore" if owner_id is None else "dal proprietario"
             conn.execute("""UPDATE searches SET status = 'active', consecutive_failures = 0, updated_at = ?, next_run_at = ?,
-                            last_result = ? WHERE id = ?""", (now, now, "Ricerca ripresa dall'amministratore", search_id))
+                            ended_at = NULL, last_result = ? WHERE id = ?""", (now, now, f"Ricerca ripresa {who}", search_id))
             self.db.audit("search_reopened", actor_id, search_id, conn=conn)
 
     def decisions(self, search_id):
