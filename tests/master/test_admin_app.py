@@ -235,6 +235,7 @@ def test_admin_continues_a_closed_search_before_the_booked_date(client, auth, no
     login(client, auth, notifier, "fede", 9000, admin=True)
     page = client.get("/admin/").text
     assert f"/admin/searches/{search_id}/continue" in page and "prima del 20/02/2027 - 10:00" in page
+    assert "possibile fino al 17/01/2027" in page                          # 48 h after the booking
     response = client.post(f"/admin/searches/{search_id}/continue", data={"csrf": csrf(client)})
     assert response.status_code == 303
     view = services.searches.get(owner, search_id)
@@ -252,3 +253,14 @@ def test_closed_search_after_the_booked_date_cannot_continue(client, auth, notif
     assert response.status_code == 409 and "già passata" in response.text
     assert services.searches.get(owner, search_id).status == "booked"
     assert client.post("/admin/searches/missing/continue", data={"csrf": csrf(client)}).status_code == 404
+
+
+def test_no_continue_48_hours_after_the_booking(client, auth, notifier, services, clock):
+    login(client, auth, notifier, "mario", 1111, admin=False)
+    owner = auth.user_by_chat(1111)
+    search_id = closed_search(services, owner, "20/02/2027 - 10:00")
+    clock.advance(48 * 3600)
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    page = client.get("/admin/").text
+    assert f"/admin/searches/{search_id}/continue" not in page and "48 ore" in page
+    assert client.post(f"/admin/searches/{search_id}/continue", data={"csrf": csrf(client)}).status_code == 409

@@ -28,7 +28,7 @@ from rlprenota.telegram import TelegramBot
 log = logging.getLogger("rlprenota.master")
 
 REAP_EVERY_SECONDS = 15
-EXPIRE_EVERY_SECONDS = 3600
+EXPIRE_EVERY_SECONDS = 300           # also wipes data kept for "continua" once its 48 h are over
 CANARY_EVERY_SECONDS = 30 * 60
 BACKUP_HOUR = 4                 # after the NAS antivirus scan (03:00)
 

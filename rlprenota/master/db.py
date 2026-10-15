@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS searches (
     last_result TEXT NOT NULL DEFAULT '',
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     current_appointment TEXT NOT NULL DEFAULT '',
-    effective_interval REAL
+    effective_interval REAL,
+    ended_at REAL                       -- when it was booked/expired: starts the 48 h "continua" window
 );
 CREATE INDEX IF NOT EXISTS searches_user ON searches(user_id);
 CREATE INDEX IF NOT EXISTS searches_due ON searches(status, next_run_at);
@@ -121,7 +122,14 @@ class Database:
             os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
         conn = self._conn()
         conn.executescript(SCHEMA)  # runs in its own transaction (executescript commits first)
+        self._migrate(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @staticmethod
+    def _migrate(conn):
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(searches)")}
+        if "ended_at" not in columns:  # version 1 -> 2
+            conn.execute("ALTER TABLE searches ADD COLUMN ended_at REAL")
 
     def _conn(self):
         conn = getattr(self._local, "conn", None)

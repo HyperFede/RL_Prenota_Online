@@ -9,7 +9,7 @@ from fastapi.responses import Response
 from rlprenota.master.app import Services, bare_404, create_base_app
 from rlprenota.master.auth import AuthError
 from rlprenota.master.crypto import hash_token
-from rlprenota.master.searches import ENDED
+from rlprenota.master.searches import CONTINUE_WINDOW_SECONDS, ENDED
 
 BASE = "/admin"
 ROLES = {"user": False, "admin": True}
@@ -31,11 +31,12 @@ def create_admin_app(services):
                             FROM users u ORDER BY u.id""")
         rows = db.query("""SELECT s.id, s.user_id, u.display_name AS owner, s.status, s.settings_json, s.last_run_at,
                                   s.last_result, s.consecutive_failures, s.effective_interval, s.current_appointment,
-                                  s.secrets_enc
+                                  s.secrets_enc, s.ended_at
                            FROM searches s JOIN users u ON u.id = s.user_id ORDER BY s.created_at DESC LIMIT 200""")
         all_searches = [SimpleNamespace(id=r["id"], owner=r["owner"], status=r["status"], last_run_at=r["last_run_at"],
                                         last_result=r["last_result"], consecutive_failures=r["consecutive_failures"],
                                         current_appointment=r["current_appointment"],
+                                        continue_until=r["ended_at"] + CONTINUE_WINDOW_SECONDS if r["ended_at"] else None,
                                         label=json.loads(r["settings_json"])["label"],
                                         blocked=searches.continuable(r) if r["status"] in ENDED else None)
                         for r in rows]
