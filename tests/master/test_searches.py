@@ -160,12 +160,16 @@ def test_old_database_gets_the_new_column(tmp_path):
                 "next_run_at REAL NOT NULL DEFAULT 0, last_run_at REAL, last_result TEXT NOT NULL DEFAULT '', "
                 "consecutive_failures INTEGER NOT NULL DEFAULT 0, current_appointment TEXT NOT NULL DEFAULT '', "
                 "effective_interval REAL)")
+    old.execute("CREATE TABLE leases (search_id TEXT PRIMARY KEY, lease_id TEXT NOT NULL UNIQUE, worker TEXT NOT NULL, "
+                "started_at REAL NOT NULL, expires_at REAL NOT NULL)")
+    old.execute("INSERT INTO leases VALUES ('s', 'l', 'w1', 0, 0)")
     old.execute("INSERT INTO searches(id, user_id, status, settings_json, created_at, updated_at) "
                 "VALUES ('s', 1, 'booked', '{}', 0, 0)")
     old.commit()
     old.close()
     db = Database(str(path))
     assert db.query_one("SELECT ended_at FROM searches WHERE id = 's'")["ended_at"] is None
+    assert db.query_one("SELECT revoked FROM leases WHERE lease_id = 'l'")["revoked"] == 0
 
 
 def test_past_appointment_wipes_at_once(repo, two_users, db):

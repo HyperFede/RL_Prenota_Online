@@ -264,3 +264,11 @@ def test_no_continue_48_hours_after_the_booking(client, auth, notifier, services
     page = client.get("/admin/").text
     assert f"/admin/searches/{search_id}/continue" not in page and "48 ore" in page
     assert client.post(f"/admin/searches/{search_id}/continue", data={"csrf": csrf(client)}).status_code == 409
+
+
+def test_self_refreshing_error_page_lands_on_the_overview(client, auth, notifier):
+    login(client, auth, notifier, "fede", 9000, admin=True)
+    for path in ("/admin/searches/abc/continue", "/admin/users/5/role", "/admin/global/resume", "/admin/limits"):
+        response = client.get(path)
+        assert response.status_code == 303 and response.headers["location"] == "/admin/"
+    assert client.get("/admin/users/1/delete").status_code in (200, 404)        # the confirmation page is a real GET

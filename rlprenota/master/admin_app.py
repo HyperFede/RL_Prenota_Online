@@ -217,4 +217,13 @@ def create_admin_app(services):
         db.audit("limits_changed", user.user_id, f"{per_user}/{total}")
         return redirect("")
 
+    @app.get(f"{BASE}/searches/{{search_id}}/{{action}}")
+    @app.get(f"{BASE}/users/{{user_id}}/{{action}}")
+    @app.get(f"{BASE}/global/{{action}}")
+    @app.get(f"{BASE}/canary/run")
+    @app.get(f"{BASE}/limits")
+    async def action_reloaded(request: Request):
+        # An error page is the answer to a POST and refreshes itself: land on the overview, not on a blank 404
+        return redirect("")
+
     return app

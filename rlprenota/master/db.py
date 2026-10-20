@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS leases (
     lease_id TEXT NOT NULL UNIQUE,
     worker TEXT NOT NULL,
     started_at REAL NOT NULL,
-    expires_at REAL NOT NULL
+    expires_at REAL NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0  -- the search was edited/paused meanwhile: the worker must drop the run
 );
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY,
@@ -130,6 +131,8 @@ class Database:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(searches)")}
         if "ended_at" not in columns:  # version 1 -> 2
             conn.execute("ALTER TABLE searches ADD COLUMN ended_at REAL")
+        if "revoked" not in {r["name"] for r in conn.execute("PRAGMA table_info(leases)")}:  # 2 -> 3
+            conn.execute("ALTER TABLE leases ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
 
     def _conn(self):
         conn = getattr(self._local, "conn", None)

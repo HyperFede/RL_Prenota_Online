@@ -76,6 +76,11 @@ class SearchRepo:
         if everyone >= total:
             raise LimitReached("Il servizio ha raggiunto il numero massimo di ricerche attive: riprova più tardi")
 
+    @staticmethod
+    def _revoke_lease(conn, search_id):
+        """A worker may be running this search with the old settings: tell it to drop the run."""
+        conn.execute("UPDATE leases SET revoked = 1 WHERE search_id = ?", (search_id,))
+
     def _owned(self, conn, user_id, search_id):
         row = conn.execute("SELECT * FROM searches WHERE id = ? AND user_id = ?", (search_id, user_id)).fetchone()
         if row is None:
@@ -112,8 +117,11 @@ class SearchRepo:
         with self.db.tx() as conn:
             if self._owned(conn, user_id, search_id)["status"] in ENDED:
                 raise LimitReached("Questa ricerca è conclusa: creane una nuova")
-            conn.execute("UPDATE searches SET settings_json = ?, updated_at = ?, next_run_at = ? WHERE id = ?",
+            # Run again right away with the new settings ('waiting' was about a proposal of the dropped run)
+            conn.execute("""UPDATE searches SET settings_json = ?, updated_at = ?, next_run_at = ?,
+                            status = CASE status WHEN 'waiting' THEN 'active' ELSE status END WHERE id = ?""",
                          (settings.to_json(), self.clock(), self.clock(), search_id))
+            self._revoke_lease(conn, search_id)
             if secrets is not None:
                 conn.execute("UPDATE searches SET secrets_enc = ? WHERE id = ?",
                              (self.crypto.encrypt_json(secrets.to_dict(), f"search:{search_id}"), search_id))
@@ -124,6 +132,7 @@ class SearchRepo:
             if self._owned(conn, user_id, search_id)["status"] in ENDED:
                 return
             conn.execute("UPDATE searches SET status = 'paused', updated_at = ? WHERE id = ?", (self.clock(), search_id))
+            self._revoke_lease(conn, search_id)
             self.db.audit("search_paused", user_id, search_id, conn=conn)
 
     def resume(self, user_id, search_id):
