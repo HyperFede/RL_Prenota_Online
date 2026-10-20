@@ -190,3 +190,65 @@ def test_interval_stretches_fairly_when_busy(scheduler, repo, user, auth, clock,
 def test_permits_space_out_portal_searches(scheduler, clock):
     waits = [scheduler.permit() for _ in range(3)]
     assert waits[0] == 0 and 2.5 <= waits[1] <= 3.5 and 5 <= waits[2] <= 7
+
+
+# --- the owner changes the search while a worker runs it ---
+
+def test_edit_during_a_run_revokes_it_and_reruns_at_once_with_the_new_settings(scheduler, repo, user, db, clock):
+    search_id = repo.create(user, settings(), SECRETS)
+    lease = scheduler.lease("w1")
+    repo.update(user, search_id, settings(start_date="2027-01-01"))
+    for call in (lambda: scheduler.lease_row(lease.lease_id), lambda: scheduler.heartbeat(lease.lease_id)):
+        with pytest.raises(LeaseLost):                # permit, propose, decision and heartbeat refuse it
+            call()
+    assert scheduler.lease("w2") is None              # never two runs of one search at once
+    scheduler.complete(lease.lease_id, outcome="dropped", duration=12)
+    assert db.query_one("SELECT COUNT(*) AS n FROM leases")["n"] == 0
+    rerun = scheduler.lease("w2")                     # no waiting for the refresh interval
+    assert rerun.search_id == search_id and rerun.settings.start_date == "2027-01-01"
+    assert repo.get(user, search_id).status == "active"
+
+
+def test_result_of_a_revoked_run_does_not_undo_a_pause(scheduler, repo, user, clock):
+    search_id = repo.create(user, settings(), SECRETS)
+    lease = scheduler.lease("w1")
+    repo.pause(user, search_id)
+    scheduler.complete(lease.lease_id, outcome="continue", duration=60)
+    assert repo.get(user, search_id).status == "paused"
+    clock.advance(10_000)
+    assert scheduler.lease("w1") is None
+
+
+def test_errors_of_a_revoked_run_are_not_counted(scheduler, repo, user):
+    search_id = repo.create(user, settings(), SECRETS)
+    lease = scheduler.lease("w1")
+    repo.update(user, search_id, settings(label="Nuova"))
+    scheduler.complete(lease.lease_id, outcome="error", error_kind="transient", duration=60, message="x")
+    assert repo.get(user, search_id).consecutive_failures == 0
+
+
+def test_booking_accepted_before_the_pause_is_still_recorded(scheduler, repo, user):
+    search_id = repo.create(user, settings(), SECRETS)
+    lease = scheduler.lease("w1")
+    repo.pause(user, search_id)
+    scheduler.complete(lease.lease_id, outcome="booked", message="Prenotato: 05/11/2099 08:30", duration=60,
+                       current_appointment="05/11/2099 - 08:30")
+    view = repo.get(user, search_id)
+    assert view.status == "booked" and view.current_appointment == "05/11/2099 - 08:30"
+
+
+def test_edit_while_waiting_for_an_answer_makes_the_search_active_again(scheduler, repo, user, db):
+    search_id = repo.create(user, settings(), SECRETS)
+    scheduler.lease("w1")
+    with db.tx() as conn:
+        conn.execute("UPDATE searches SET status = 'waiting' WHERE id = ?", (search_id,))
+    repo.update(user, search_id, settings(label="Nuova"))
+    assert repo.get(user, search_id).status == "active"
+
+
+def test_deleted_search_report_is_refused(scheduler, repo, user):
+    search_id = repo.create(user, settings(), SECRETS)
+    lease = scheduler.lease("w1")
+    repo.delete(user, search_id)
+    with pytest.raises(LeaseLost):
+        scheduler.complete(lease.lease_id, outcome="continue", duration=5)

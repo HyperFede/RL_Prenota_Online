@@ -176,3 +176,44 @@ def test_requests_must_be_signed_and_fresh(stack):
     with pytest.raises(urllib.error.HTTPError) as replay:
         urllib.request.urlopen(urllib.request.Request(stack["url"] + "/api/lease", data=body, headers=headers))
     assert replay.value.code == 401
+
+
+# --- the owner edits or pauses the search while a worker runs it ---
+
+def test_edit_during_a_run_stops_it_and_the_next_run_uses_the_new_settings(stack, browsers):
+    stack["scheduler"].resume_global()
+    search_id = create(stack)
+    newer = SearchSettings.from_form({"label": "Visita", "location_mode": "provinces", "province": ["MILANO CITTA'"],
+                                      "start_date": "2027-01-01", "end_date": "2099-12-31", "telegram_timeout": "1"},
+                                     today=date(2026, 10, 9))
+    edited = mock_portal(stack["page"])
+
+    def open_and_edit(driver, *args, **kwargs):
+        stack["searches"].update(stack["owner"], search_id, newer)     # the owner saves while the worker logs in
+        driver.get(stack["page"])
+        return portal.MODE_NEW, None
+    sent_before = len(stack["fake"].sent_to(5555))
+    with edited, mock.patch.object(portal, "open_search_flow", side_effect=open_and_edit):
+        assert worker(stack, browsers).run_once() is True
+    assert len(stack["fake"].sent_to(5555)) == sent_before            # the old settings proposed nothing
+    assert stack["db"].query_one("SELECT COUNT(*) AS n FROM leases")["n"] == 0
+    with mock_portal(stack["page"]):
+        assert worker(stack, browsers).run_once() is True              # rerun at once, with the new dates
+    assert len(stack["fake"].sent_to(5555)) == sent_before            # 05-06/11/2026 are before 01/01/2027
+    view = stack["searches"].get(stack["owner"], search_id)
+    assert view.status == "active" and view.last_run_at is not None and view.settings.start_date == "2027-01-01"
+
+
+def test_pause_while_waiting_for_an_answer_stops_the_run_within_seconds(stack, browsers):
+    stack["scheduler"].resume_global()
+    search_id = create(stack)
+    stack["fake"].answers = [None]                                    # the owner doesn't answer...
+    pause = threading.Timer(3, lambda: stack["searches"].pause(stack["owner"], search_id))   # ...and pauses instead
+    started = time.monotonic()
+    with mock_portal(stack["page"]):
+        pause.start()
+        assert worker(stack, browsers).run_once() is True
+    assert time.monotonic() - started < 20                            # not the 1-minute answer window
+    assert stack["searches"].get(stack["owner"], search_id).status == "paused"
+    assert any("modificata o messa in pausa" in text for _, text, buttons in stack["fake"].edits if buttons)
+    assert not stack["scheduler"].alerts.is_waiting(search_id, next(iter(stack["searches"].decisions(search_id).proposals)))

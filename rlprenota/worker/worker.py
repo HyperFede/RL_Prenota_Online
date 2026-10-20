@@ -126,6 +126,16 @@ class MasterDecider(Decider):
                     return answer
             self.client.expire(self.lease_id, slot.slot_id)
             return None
+        except LeaseLost:
+            # The search was edited or paused while waiting: later answers are handled as late answers
+            try:
+                self.client.expire(self.lease_id, slot.slot_id)
+                self.client.update(self.lease_id, slot.slot_id, "✏️ La ricerca è stata modificata o messa in pausa.\n"
+                                   "Puoi ancora rispondere: se premi Prenota, lo prenoterò appena lo ritrovo disponibile.",
+                                   keep_buttons=True)
+            except (LeaseLost, MasterUnavailable):
+                pass  # best effort: the run is being dropped anyway
+            raise
         finally:
             self.waited += self.clock() - start
 
@@ -134,6 +144,11 @@ class MasterDecider(Decider):
 
     def notify(self, text):
         self.client.notify(self.lease_id, text)
+
+
+def booked_result(slot):
+    return {"outcome": "booked", "message": f"Prenotato: {slot.date_str} {slot.time_str}, {slot.sede or slot.azienda}"
+            if slot else "Prenotato"}
 
 
 class Worker:
@@ -177,14 +192,14 @@ class Worker:
             outcome = run_cycle(session)
             if outcome == STOP or session.booked_slot is not None:
                 # A completed booking is reported even if the watchdog fired afterwards
-                slot = session.booked_slot
-                result = {"outcome": "booked", "message": f"Prenotato: {slot.date_str} {slot.time_str}, {slot.sede or slot.azienda}"
-                          if slot else "Prenotato"}
+                result = booked_result(session.booked_slot)
             elif watchdog.fired:
                 raise TimeoutError("Ricerca interrotta dal watchdog: troppo lenta")
         except LeaseLost:
-            log.warning("Lease perso durante la ricerca: risultato scartato")
-            return True
+            # Usually the owner edited or paused the search: stop now, and say so to the master (a revoked
+            # lease still takes the report), so the next run can start at once with the new settings
+            log.info("Ricerca modificata o messa in pausa: interrompo questo ciclo")
+            result = booked_result(session.booked_slot) if session is not None and session.booked_slot else {"outcome": "dropped"}
         except NoAvailability:
             # Normal: nothing bookable online right now (e.g. right after login). Not an error.
             result = {"outcome": "continue", "message": "Al momento il portale non ha disponibilità online: continuo a controllare"}

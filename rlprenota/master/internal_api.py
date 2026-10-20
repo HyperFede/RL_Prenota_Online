@@ -1,5 +1,8 @@
 """Internal API between the master and the workers (internal Docker network only, never published).
 
+A revoked lease (the owner edited or paused the search) refuses everything that starts new work (permit,
+propose, decision, heartbeat), but still accepts the messages and the report that close the run.
+
 Every request is signed: HMAC-SHA256 over method, path, timestamp and body hash with a shared secret;
 requests older than 30 s or already seen are refused. A worker only ever acts through a lease: the search
 is always taken from the server-side lease, never from the request.
@@ -20,6 +23,7 @@ from rlprenota.signing import sign
 
 MAX_SKEW_SECONDS = 30
 MAX_DECISION_WAIT_SECONDS = 25
+DECISION_CHECK_SECONDS = 2
 
 
 class ReplayGuard:
@@ -102,33 +106,40 @@ def create_internal_app(scheduler, router, searches, secret, clock=time.time):
         search_id = scheduler.lease_row(lease_id)["search_id"]
         wait = min(MAX_DECISION_WAIT_SECONDS, max(0.0, float(data.get("wait") or 0)))
         scheduler.heartbeat(lease_id)
-        answer = await anyio.to_thread.run_sync(router.wait_decision, search_id, str(data["slot_id"]), wait)
-        return {"decision": answer}
+        slot_id = str(data["slot_id"])
+        deadline = time.monotonic() + wait
+        while True:
+            # In short slices: an edit or pause meanwhile revokes the lease, and the worker must hear it soon
+            slice_seconds = max(0.0, min(DECISION_CHECK_SECONDS, deadline - time.monotonic()))
+            answer = await anyio.to_thread.run_sync(router.wait_decision, search_id, slot_id, slice_seconds)
+            if answer or time.monotonic() >= deadline or not router.is_waiting(search_id, slot_id):
+                return {"decision": answer}
+            scheduler.lease_row(lease_id)
 
     @app.post("/api/lease/{lease_id}/expire")
     async def expire(lease_id: str, request: Request):
         data = await payload(request)
-        router.expire(scheduler.lease_row(lease_id)["search_id"], str(data["slot_id"]))
+        router.expire(scheduler.lease_row(lease_id, allow_revoked=True)["search_id"], str(data["slot_id"]))
         return {"ok": True}
 
     @app.post("/api/lease/{lease_id}/update")
     async def update(lease_id: str, request: Request):
         data = await payload(request)
-        router.update(scheduler.lease_row(lease_id)["search_id"], str(data["slot_id"]), str(data.get("footer", ""))[:2000],
+        router.update(scheduler.lease_row(lease_id, allow_revoked=True)["search_id"], str(data["slot_id"]), str(data.get("footer", ""))[:2000],
                       bool(data.get("keep_buttons")))
         return {"ok": True}
 
     @app.post("/api/lease/{lease_id}/notify")
     async def notify(lease_id: str, request: Request):
         data = await payload(request)
-        row = scheduler.lease_row(lease_id)
+        row = scheduler.lease_row(lease_id, allow_revoked=True)
         router.notify_user(row["user_id"], str(data.get("text", ""))[:1000])
         return {"ok": True}
 
     @app.post("/api/lease/{lease_id}/store")
     async def store(lease_id: str, request: Request):
         data = await payload(request)
-        decisions = searches.decisions(scheduler.lease_row(lease_id)["search_id"])
+        decisions = searches.decisions(scheduler.lease_row(lease_id, allow_revoked=True)["search_id"])
         op, slot_id = data.get("op"), str(data.get("slot_id", ""))
         if op == "status":
             if slot_id not in decisions.proposals and data.get("slot"):

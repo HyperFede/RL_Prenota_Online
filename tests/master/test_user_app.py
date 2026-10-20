@@ -264,3 +264,43 @@ def test_changing_personal_data_needs_a_recent_telegram_confirmation(client, aut
     assert client.post(url(f"searches/{search_id}/edit"), data=form).status_code == 303
     assert services.searches.get(1, search_id).settings.label == "Rinominata"
     assert services.searches.secrets_for(search_id).tessera == "12345"
+
+
+# --- refused or reloaded actions never end on a bare error ---
+
+def test_safari_same_site_form_without_origin_is_accepted_but_cross_site_is_not(client, auth, notifier, services):
+    logged_in(client, auth, notifier)
+    search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
+    token = csrf(client, "")
+    for origin in ("", "null"):
+        response = client.post(url(f"searches/{search_id}/pause"), data={"csrf": token},
+                               headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"})
+        assert response.status_code == 303
+    for headers in ({"Origin": "null", "Sec-Fetch-Site": "cross-site"}, {"Origin": ""},
+                    {"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"}):
+        response = client.post(url(f"searches/{search_id}/resume"), data={"csrf": token}, headers=headers)
+        assert response.status_code == 403
+    assert services.searches.get(1, search_id).status == "paused"
+
+
+def test_stale_form_gets_a_way_back_and_does_nothing(client, auth, notifier, services, caplog):
+    logged_in(client, auth, notifier)
+    search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
+    with caplog.at_level("WARNING"):
+        response = client.post(url(f"searches/{search_id}/pause"), data={"csrf": "old-page"})
+    assert response.status_code == 403 and "non è stata eseguita" in response.text
+    assert f'href="/{PREFIX}/searches/{search_id}"' in response.text
+    assert services.searches.get(1, search_id).status == "active"
+    ours = [r.getMessage() for r in caplog.records if r.name == "rlprenota.master.app"]
+    assert any("Richiesta rifiutata (csrf): POST /searches/" in m for m in ours)
+    assert not any(PREFIX in m for m in ours)                                   # the secret path is never logged
+
+
+def test_reloading_an_action_lands_on_the_search_page(client, auth, notifier):
+    logged_in(client, auth, notifier)
+    search_id = create_search(client).headers["location"].rstrip("/").rsplit("/", 1)[-1]
+    for action in ("pause", "resume", "delete", "continue"):
+        response = client.get(url(f"searches/{search_id}/{action}"))
+        assert response.status_code == 303 and response.headers["location"] == url(f"searches/{search_id}")
+    assert client.get(url(f"searches/{search_id}/edit")).status_code == 200     # real pages still work
+    assert client.get(url(f"searches/{search_id}/other")).status_code == 404

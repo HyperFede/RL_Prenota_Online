@@ -4,9 +4,11 @@
   expired lease (crashed worker) is simply requeued.
 - Each search asks for its refresh interval (min 60 s); when the workers can't keep up, every interval
   stretches fairly to `active searches x average cycle / workers`.
-- Errors: transient -> exponential backoff and, after 5 in a row, pause + alerts; login rejected ->
-  pause and tell the user; portal changed on 2+ searches within 30 min -> global pause + admin alert;
-  throttled -> global pause for 10 minutes + admin alert.
+- Errors: transient -> exponential backoff (never paused; one admin alert after 10 in a row); login
+  rejected -> pause and tell the user; portal changed on 3+ searches within 30 min -> global pause + admin
+  alert; throttled -> global pause for 10 minutes + admin alert.
+- Editing or pausing a search revokes its lease: the worker drops the run at its next call, and the
+  result no longer touches the search (except a booking, which the owner accepted).
 - permit() spaces portal searches across all workers (politeness / anti-ban).
 """
 import json
@@ -102,10 +104,12 @@ class Scheduler:
                      self.searches.secrets_for(row["id"]), row["current_appointment"], dict(store.discarded),
                      dict(store.proposals))
 
-    def lease_row(self, lease_id):
+    def lease_row(self, lease_id, allow_revoked=False):
+        """The live lease, or LeaseLost. A revoked lease (search edited or paused meanwhile) still lets the
+        worker finish what can't be undone (a booking, its Telegram messages) and report back."""
         row = self.db.query_one("""SELECT l.*, s.user_id FROM leases l JOIN searches s ON s.id = l.search_id
                                    WHERE l.lease_id = ?""", (lease_id,))
-        if row is None or row["expires_at"] < self.clock():
+        if row is None or row["expires_at"] < self.clock() or (row["revoked"] and not allow_revoked):
             raise LeaseLost()
         return row
 
@@ -131,12 +135,15 @@ class Scheduler:
     def complete(self, lease_id, outcome, duration, error_kind=None, message="", selector="", step="",
                  current_appointment=None):
         """outcome: "continue" | "booked" | "error" (with error_kind from rlprenota.core.errors.ErrorKind)."""
-        lease = self.lease_row(lease_id)
+        lease = self.lease_row(lease_id, allow_revoked=True)
         search_id, user_id, now = lease["search_id"], lease["user_id"], self.clock()
         row = self.db.query_one("SELECT settings_json, consecutive_failures FROM searches WHERE id = ?", (search_id,))
         if row is None:  # deleted by the user meanwhile
             return
         settings = SearchSettings.from_json(row["settings_json"])
+        if lease["revoked"]:
+            self._complete_revoked(lease_id, search_id, user_id, settings, outcome, duration, message, current_appointment)
+            return
         notify, admin = None, None
 
         with self.db.tx() as conn:
@@ -182,6 +189,18 @@ class Scheduler:
             self.alerts.notify_user(user_id, notify)
         if admin:
             self.alerts.alert_admin(*admin)
+
+    def _complete_revoked(self, lease_id, search_id, user_id, settings, outcome, duration, message, current_appointment):
+        """The owner edited or paused the search during the run: its status and schedule are theirs now.
+        Only a booking (which the owner accepted on Telegram) is still recorded."""
+        with self.db.tx() as conn:
+            conn.execute("DELETE FROM leases WHERE lease_id = ?", (lease_id,))
+            if outcome == "booked" and current_appointment is not None:
+                conn.execute("UPDATE searches SET current_appointment = ? WHERE id = ?", (current_appointment[:40], search_id))
+            self.db.audit("run_revoked", user_id, json.dumps({"search": search_id, "outcome": outcome,
+                                                              "duration": round(duration, 1)}), conn=conn)
+        if outcome == "booked" and not settings.continua_dopo_prenotazione:
+            self.searches.finish(search_id, "booked", message or "Prenotato")
 
     def _record_portal_change(self, search_id, selector, step, message):
         now = self.clock()

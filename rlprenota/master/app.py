@@ -3,6 +3,7 @@
 No JavaScript at all (CSP script-src 'none'): server-rendered pages, the login page refreshes itself.
 Everything outside the prefix, and every missing or foreign resource, is a bare 404.
 """
+import logging
 import os
 import re
 import time
@@ -20,7 +21,9 @@ from rlprenota.master.auth import AuthError
 from rlprenota.master.searches import LimitReached, NotFound
 from rlprenota.master.validation import PROVINCES, SearchSecrets, SearchSettings, ValidationError
 
+log = logging.getLogger(__name__)
 HERE = os.path.dirname(__file__)
+SEARCH_PAGE = re.compile(r"/searches/([A-Za-z0-9_-]{6,40})(?:/|$)")
 SESSION_COOKIE = "rlp_s"
 LOGIN_COOKIE = "rlp_l"
 SESSION_MAX_AGE = 30 * 86400
@@ -94,7 +97,8 @@ def create_base_app(services, base, allow=None):
         if path != base and not path.startswith(base + "/"):
             return bare_404()
         if request.method not in ("GET", "HEAD") and not same_origin(request):
-            response = Response("Richiesta da un'origine non consentita", status_code=403)
+            log_refused(request, "origine")
+            response = refused(request)
         else:
             response = await call_next(request)
         for key, value in SECURITY_HEADERS.items():
@@ -105,8 +109,30 @@ def create_base_app(services, base, allow=None):
 
     def same_origin(request):
         origin = request.headers.get("origin") or ""
+        if origin in ("", "null"):
+            # Some browsers (Safari) leave out or blank the Origin of a same-site form; Sec-Fetch-Site is set by
+            # the browser itself and can't be forged by a page. The CSRF token is checked on top of this.
+            return request.headers.get("sec-fetch-site") == "same-origin"
         expected = services.public_origin or f"{request.url.scheme}://{request.url.netloc}"
-        return bool(origin) and origin.rstrip("/") == expected.rstrip("/")
+        return origin.rstrip("/") == expected.rstrip("/")
+
+    def page_path(request):
+        """The request path without the secret prefix (safe to log)."""
+        return request.url.path[len(base):] or "/"
+
+    def log_refused(request, reason):
+        log.warning(f"Richiesta rifiutata ({reason}): {request.method} {page_path(request)} "
+                    f"origin={(request.headers.get('origin') or '-')[:60]} "
+                    f"fetch-site={(request.headers.get('sec-fetch-site') or '-')[:20]}")
+
+    def back_target(request):
+        match = SEARCH_PAGE.search(page_path(request))
+        return f"{base}/searches/{match.group(1)}" if match else f"{base}/"
+
+    def refused(request):
+        """A form that can't be trusted (stale page, other origin): nothing was done, offer the way back."""
+        return templates.TemplateResponse(request, "refused.html", {"user": None, "back": back_target(request)},
+                                          status_code=403)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_errors(request, exc):
@@ -147,7 +173,8 @@ def create_base_app(services, base, allow=None):
         if user is None:
             return redirect("login")
         if form is not None and not user.check_csrf(form.get("csrf")):
-            return Response("Sessione scaduta: ricarica la pagina", status_code=403)
+            log_refused(request, "csrf")
+            return refused(request)
         return user
 
     # --- login ---
@@ -377,6 +404,13 @@ def create_user_app(services, prefix):
     action("resume", searches.resume)
     action("delete", searches.delete)
     action("continue", lambda user_id, search_id: searches.reopen(search_id, user_id, owner_id=user_id))
+
+    @app.get(f"{base}/searches/{{search_id}}/{{name}}")
+    async def action_reloaded(request: Request, search_id: str, name: str):
+        # The answer to an action is a POST result: an automatic refresh or a reload of it lands here
+        if name not in ("pause", "resume", "delete", "continue"):
+            return bare_404()
+        return redirect(f"searches/{search_id}")
 
     @app.post(f"{base}/searches/{{search_id}}/undiscard/{{slot_id}}")
     async def undiscard(request: Request, search_id: str, slot_id: str):

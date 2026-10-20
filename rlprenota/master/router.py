@@ -87,6 +87,10 @@ class ProposalRouter:
             self._waiting.pop(key, None)
             return self._answers.pop(key)
 
+    def is_waiting(self, search_id, slot_id):
+        with self._cond:
+            return (search_id, slot_id) in self._waiting
+
     def expire(self, search_id, slot_id):
         """The worker stopped waiting: later answers are handled as late answers."""
         with self._cond:
