@@ -44,7 +44,8 @@ class ProposalRouter:
         settings = SearchSettings.from_json(row["settings_json"])
         current = row["current_appointment"] if current_appointment is None else current_appointment
         context = SimpleNamespace(current_appointment=SimpleNamespace(date=current) if current else None,
-                                  prefs=SimpleNamespace(dry_run=settings.dry_run if dry_run is None else dry_run))
+                                  prefs=SimpleNamespace(dry_run=settings.dry_run if dry_run is None else dry_run,
+                                                        posticipa=settings.posticipa))
         return f"🔎 {settings.label}\n" + proposal_text(context, slot, footer)
 
     @staticmethod

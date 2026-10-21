@@ -62,8 +62,9 @@ class FlowTest(unittest.TestCase):
         self.driver.get("file://" + page)
 
     def session(self, answers=None, current=None, dry_run=False, telegram=True, timeout_minutes=0.05,
-                start="", end="", state_file=None, terminal_answers=None):
-        prefs = SearchPreferences([PROV], start, end, 1, dry_run, telegram_timeout_minuti=timeout_minutes)
+                start="", end="", state_file=None, terminal_answers=None, posticipa=False):
+        prefs = SearchPreferences([PROV], start, end, 1, dry_run, telegram_timeout_minuti=timeout_minutes,
+                                  posticipa=posticipa)
         if telegram:
             self.fake = self.fake or FakeTelegram()
             self.fake.answers = list(answers or [])
@@ -143,6 +144,35 @@ class FlowTest(unittest.TestCase):
         runner.process_results(s, PROV)
         self.assertEqual(self.booked_index(), 0)
         self.assertEqual(s.current_appointment.date, "05/11/2026 - 08:30")
+
+    # --- postpone (posticipa) ---
+
+    def proposed(self):
+        return [text for _, text, buttons in self.fake.sent if buttons]
+
+    def test_postpone_proposes_only_later_slots_up_to_one_month_after(self):
+        self.load()
+        s = self.session(answers=["r", "r"], current="20/11/2026 - 12:00", posticipa=True)
+        self.assertEqual(runner.process_results(s, PROV), "NEXT")
+        proposed = self.proposed()
+        self.assertEqual(len(proposed), 1)                              # 20/12 10:00; 21/12 is past 20/12 23:59
+        self.assertIn("20/12/2026", proposed[0])
+        self.assertIn("Posticipo dell'appuntamento attuale: 20/11/2026 - 12:00", proposed[0])
+
+    def test_postpone_up_to_the_end_date_walks_the_result_pages_and_books(self):
+        self.load()
+        s = self.session(answers=["r", "r", "a"], current="20/11/2026 - 12:00", end="22/12/2026", posticipa=True)
+        self.assertEqual(runner.process_results(s, PROV), "STOP")
+        self.assertEqual(self.booked_index(), 5)                        # 22/12, on the second page
+        self.assertEqual(s.current_appointment.date, "22/12/2026 - 10:00")
+
+    def test_postpone_never_proposes_the_booked_slot_itself(self):
+        self.load()
+        s = self.session(answers=["r"], current="05/11/2026 - 09:00", end="06/11/2026", posticipa=True)
+        runner.process_results(s, PROV)
+        proposed = self.proposed()
+        self.assertEqual(len(proposed), 1)
+        self.assertIn("06/11/2026", proposed[0])
 
     # --- no answer / late answers ---
 

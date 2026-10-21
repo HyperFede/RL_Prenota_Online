@@ -94,3 +94,16 @@ def test_radius_and_facilities_settings():
                                                facilities="Niguarda | MILANO CITTA'\nOspedale di Circolo | VARESE"), today=TODAY)
     assert f.facilities == [{"name": "Niguarda", "province": "MILANO CITTA'"},
                             {"name": "Ospedale di Circolo", "province": "VARESE"}]
+
+
+def test_postpone_and_dry_run_defaults():
+    base = {"label": "V", "location_mode": "provinces", "province": ["BERGAMO"]}
+    s = SearchSettings.from_form(base, today=date(2026, 10, 22))
+    assert s.dry_run is False and s.posticipa is False                 # books for real unless asked
+    s = SearchSettings.from_form({**base, "posticipa": "on"}, today=date(2026, 10, 22))
+    assert s.posticipa is True and s.to_preferences(SearchSecrets.from_form({"codice_fiscale": "MRTMTT25D09F205Z", "tessera": "12345", "ricetta": "0300A1234567890"})).posticipa is True
+    with pytest.raises(ValidationError) as e:
+        SearchSettings.from_form({**base, "posticipa": "on", "continua_dopo_prenotazione": "on"}, today=date(2026, 10, 22))
+    assert e.value.field == "posticipa"
+    old = SearchSettings.from_json('{"label": "V", "location_mode": "provinces", "province": ["BERGAMO"], "dry_run": true}')
+    assert old.posticipa is False and old.dry_run is True              # saved searches keep their choice

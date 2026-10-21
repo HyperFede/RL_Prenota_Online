@@ -1,4 +1,5 @@
 """One search session on the portal: scan provinces, ask the user, book. Shared by the CLI and the NAS workers."""
+import calendar
 import logging
 import time
 
@@ -6,10 +7,11 @@ from selenium.common.exceptions import NoSuchElementException, StaleElementRefer
 
 from rlprenota.core import portal
 from rlprenota.core.decisions import ACCEPT, BOOKED, EXPIRED, REJECT
-from rlprenota.core.errors import NoAvailability, PortalChanged, PortalError, PortalHiccup
+from rlprenota.core.errors import LoginRejected, NoAvailability, PortalChanged, PortalError, PortalHiccup
 from rlprenota.core.filters import Verdict
 
 log = logging.getLogger(__name__)
+POSTPONE_RESULT_PAGES = 30
 
 DEFAULT_IGNORED = (NoSuchElementException, StaleElementReferenceException)
 
@@ -39,6 +41,9 @@ class SearchSession:
             try:
                 self.mode, self.current_appointment = portal.open_search_flow(
                     self.driver, self.prescription, self.prefs, self.ignored_exceptions, self.ask)
+                if getattr(self.prefs, "posticipa", False) and self.current_appointment is None:
+                    raise LoginRejected("la ricetta non ha un appuntamento prenotato da posticipare: disattiva "
+                                        "«Posticipa» per prenotare la prima data utile")
                 return
             except (PortalChanged, PortalHiccup) as e:
                 # Usually the portal ending the session or loading slowly: start again with a clean page
@@ -63,15 +68,33 @@ class SearchSession:
     def provinces(self):
         return self.filter.provinces_to_search()
 
+    @property
+    def postponing(self):
+        return bool(getattr(self.prefs, "posticipa", False)) and self.current_appointment is not None
+
+    def postpone_limit(self):
+        """Latest acceptable slot when postponing: the end date, or one month after the booked appointment."""
+        if self.filter.end_date:
+            return self.prefs.get_end_date_datetime().replace(hour=23, minute=59)
+        return one_month_after(self.current_appointment.get_datetime()).replace(hour=23, minute=59)
+
     def is_better(self, slot):
         verdict = self.filter.accepts(slot)
         if not verdict.ok:
+            return verdict
+        if self.postponing:
+            if slot.when <= self.current_appointment.get_datetime():
+                return Verdict(False, "non successivo all'appuntamento attuale")
+            if slot.when > self.postpone_limit():
+                return Verdict(False, "oltre il limite per posticipare")
             return verdict
         if self.current_appointment is not None and slot.when >= self.current_appointment.get_datetime():
             return Verdict(False, "non precedente all'appuntamento attuale")
         return verdict
 
     def upper_bound(self):
+        if self.postponing:
+            return self.postpone_limit()
         bounds = []
         if self.current_appointment is not None:
             bounds.append(self.current_appointment.get_datetime())
@@ -79,11 +102,28 @@ class SearchSession:
             bounds.append(self.prefs.get_end_date_datetime().replace(hour=23, minute=59))
         return min(bounds) if bounds else None
 
+    def portal_hints(self):
+        hints = self.filter.portal_hints()
+        # When postponing, ask the portal for results from the booked day: the wanted slots come after it
+        hints.start_from = self.current_appointment.get_datetime().date() if self.postponing else None
+        return hints
+
+    def max_result_pages(self):
+        # If the portal ignores the start date, the later slots are further down the list
+        return POSTPONE_RESULT_PAGES if self.postponing else portal.MAX_RESULT_PAGES
+
+
+def one_month_after(when):
+    """Same day of the next month (the last day of it when that day doesn't exist, e.g. 31/01 -> 28/02)."""
+    year, month = (when.year + 1, 1) if when.month == 12 else (when.year, when.month + 1)
+    day = min(when.day, calendar.monthrange(year, month)[1])
+    return when.replace(year=year, month=month, day=day)
+
 
 def find_candidate(session, province, skip):
     """Return the earliest slot (in the results of `province`) worth proposing or booking, or None."""
     bound = session.upper_bound()
-    for page in range(portal.MAX_RESULT_PAGES):
+    for page in range(session.max_result_pages()):
         slots = portal.extract_slots(session.driver, province)
         best = None
         for slot in slots:
@@ -189,7 +229,7 @@ def run_cycle(session):
 
     PortalError subclasses propagate: the caller decides about retries and alerts."""
     driver, ignored_exceptions = session.driver, session.ignored_exceptions
-    hints = session.filter.portal_hints()
+    hints = session.portal_hints()
     provinces = list(session.provinces())
     index, retried, fresh_login, skipped_in_a_row = 0, False, False, 0
     while index < len(provinces):

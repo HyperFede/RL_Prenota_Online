@@ -286,3 +286,13 @@ def test_db_decision_store_behaves_like_the_file_store(repo, two_users):
     assert [d["slot_id"] for d in repo.discarded(a, search_id)] == [slot.slot_id]
     repo.undiscard(a, search_id, slot.slot_id)
     assert not repo.decisions(search_id).is_discarded(slot)
+
+
+def test_a_postpone_search_ends_with_its_booking(repo, two_users, db):
+    a, b = two_users
+    search_id = repo.create(a, settings(end_date="2027-12-31", posticipa="on"), SECRETS)
+    execute(db, "UPDATE searches SET current_appointment = '20/02/2027 - 10:00' WHERE id = ?", (search_id,))
+    repo.finish(search_id, "booked", "Prenotato")
+    assert "posticipare" in repo.continuable(row(db, search_id), today=date(2027, 1, 15))
+    with pytest.raises(LimitReached):
+        repo.reopen(search_id, b, today=date(2027, 1, 15))

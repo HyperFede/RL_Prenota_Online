@@ -39,8 +39,9 @@ ACCEPTED = Verdict(True)
 class PortalHints:
     """Constraints that can be pushed into the portal's own search form."""
 
-    def __init__(self, weekdays, morning, afternoon):
+    def __init__(self, weekdays, morning, afternoon, start_from=None):
         self.weekdays, self.morning, self.afternoon = weekdays, morning, afternoon
+        self.start_from = start_from    # date for the portal's "A partire da" field (None: leave the portal's)
 
 
 def _tokens(text):

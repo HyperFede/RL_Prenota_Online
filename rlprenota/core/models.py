@@ -100,7 +100,7 @@ class SearchPreferences:
     def __init__(self, province, start_date, end_date, refresh_frequency, dry_run=True, telegram_token="", telegram_chat_id="",  # nosec B107
                  telefono="", email="", visita_controllo=None, telegram_timeout_minuti=15, continua_dopo_prenotazione=False,
                  location_mode="provinces", home_comune="", max_km=None, facilities=None,
-                 weekdays=None, time_from=None, time_to=None):
+                 weekdays=None, time_from=None, time_to=None, posticipa=False):
         self.province = province
         self.start_date = start_date
         self.end_date = end_date
@@ -122,6 +122,8 @@ class SearchPreferences:
         self.weekdays = weekdays          # set of 0 (Monday) .. 6 (Sunday), None = any day
         self.time_from = time_from        # datetime.time or "HH:MM", None = no limit
         self.time_to = time_to
+        # Postpone: look for a slot AFTER the booked appointment (up to end_date, or one month after it)
+        self.posticipa = posticipa
     
     def get_start_date_input(self):
         return ''.join(filter(str.isdigit, self.start_date))

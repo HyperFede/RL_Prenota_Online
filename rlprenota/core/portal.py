@@ -611,6 +611,35 @@ def apply_portal_hints(driver, hints):
         _set_checkbox(driver, "pomeriggio", hints.afternoon)
     except WebDriverException as e:
         log.debug(f"-> Filtri giorni/fasce del portale non applicati: {str(e)[:100]}")
+    if getattr(hints, "start_from", None):
+        set_start_date(driver, hints.start_from)
+
+
+# The portal's "A partire da" field (AngularJS text input bound to doveQuandoCtrl.stringDal, dd/mm/yyyy)
+SET_START_DATE_JS = """
+var box = Array.prototype.filter.call(document.querySelectorAll('input#quando'), function (e) {
+    return e.offsetParent !== null; })[0] || document.querySelector('input#quando');
+if (!box) { return null; }
+var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+setter.call(box, arguments[0]);
+['input', 'change', 'blur'].forEach(function (name) { box.dispatchEvent(new Event(name, { bubbles: true })); });
+return box.value;
+"""
+
+
+def set_start_date(driver, day):
+    """Best effort: if the field is missing or refuses the date, the results are simply walked further."""
+    wanted = day.strftime("%d/%m/%Y")
+    try:
+        shown = driver.execute_script(SET_START_DATE_JS, wanted)
+    except WebDriverException as e:
+        log.debug(f"-> Data 'A partire da' non impostata: {str(e)[:100]}")
+        return False
+    if shown != wanted:
+        log.info(f"-> Il portale non ha accettato 'A partire da' {wanted} (mostra: {shown!r}): scorro i risultati.")
+        return False
+    log.debug(f"-> 'A partire da' impostato a {wanted}")
+    return True
 
 
 def no_availability_message(driver):
