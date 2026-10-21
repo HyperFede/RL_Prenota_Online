@@ -303,7 +303,7 @@ def create_user_app(services, prefix):
         user = require_user(request)
         if isinstance(user, Response):
             return user
-        return render(request, "search_form.html", user=user, values={"refresh_seconds": "300", "dry_run": "on",
+        return render(request, "search_form.html", user=user, values={"refresh_seconds": "300",
                                                                       "telegram_timeout": "15"}, editing=False)
 
     def form_values(form):
@@ -356,7 +356,8 @@ def create_user_app(services, prefix):
                   "start_date": s.start_date, "end_date": s.end_date, "weekdays": [str(d) for d in s.weekdays],
                   "time_from": s.time_from, "time_to": s.time_to, "refresh_seconds": str(s.refresh_seconds),
                   "dry_run": "on" if s.dry_run else "", "visita_controllo": {True: "si", False: "no"}.get(s.visita_controllo, ""),
-                  "telegram_timeout": str(s.telegram_timeout), "continua_dopo_prenotazione": "on" if s.continua_dopo_prenotazione else ""}
+                  "telegram_timeout": str(s.telegram_timeout), "continua_dopo_prenotazione": "on" if s.continua_dopo_prenotazione else "",
+                  "posticipa": "on" if s.posticipa else ""}
         return render(request, "search_form.html", user=user, values=values, editing=True, s=view)
 
     @app.post(f"{base}/searches/{{search_id}}/edit")

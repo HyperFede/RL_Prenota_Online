@@ -92,6 +92,7 @@ def test_run_cycle_rate_limits_and_propagates_portal_changes():
                               filter=SearchPreferences(["BERGAMO", "MILANO CITTA'"], "", "", 60).build_filter(),
                               before_search=lambda: calls.append("tick"), open=mock.Mock())
     session.provinces = session.filter.provinces_to_search
+    session.portal_hints = session.filter.portal_hints
     changed = [False, PortalChanged("x", "y"), PortalChanged("x", "y")]
     with mock.patch.object(portal, "search_in_province", side_effect=changed), \
             mock.patch.object(portal, "cleanup_ui_for_next_search"):
@@ -106,3 +107,45 @@ def test_time_hints_flow_from_preferences():
     hints = prefs.build_filter().portal_hints()
     assert hints.weekdays == {5} and not hints.morning and hints.afternoon
     assert prefs.build_filter().time_from == time(15, 0)
+
+
+def test_postpone_sets_the_portal_start_date(load_html):
+    from datetime import date
+    driver = load_html(SEARCH_FORM.replace("<button", '<input id="quando" type="text" value="22/10/2026" '
+                                                     'oninput="window.typed = this.value"><button'))
+    hints = PortalHints(weekdays=set(range(7)), morning=True, afternoon=True, start_from=date(2027, 5, 19))
+    assert portal.search_in_province(driver, IGNORED, "BERGAMO", PREFS, hints) is True
+    assert driver.execute_script("return window.typed;") == "19/05/2027"     # AngularJS hears the input event
+
+
+def test_missing_start_date_field_is_not_an_error(load_html):
+    from datetime import date
+    driver = load_html(SEARCH_FORM)
+    assert portal.set_start_date(driver, date(2027, 5, 19)) is False
+
+
+def test_postpone_without_a_booked_appointment_asks_the_user():
+    prefs = SearchPreferences(["BERGAMO"], "", "", 60, posticipa=True)
+    session = runner.SearchSession(None, None, prefs, None, None)
+    with mock.patch.object(portal, "open_search_flow", return_value=(portal.MODE_NEW, None)):
+        with pytest.raises(LoginRejected, match="posticipare"):
+            session.open()
+
+
+def test_one_month_after():
+    from datetime import datetime
+    assert runner.one_month_after(datetime(2027, 1, 31, 9, 0)) == datetime(2027, 2, 28, 9, 0)
+    assert runner.one_month_after(datetime(2026, 12, 15)) == datetime(2027, 1, 15)
+    assert runner.one_month_after(datetime(2028, 1, 30)) == datetime(2028, 2, 29)
+
+
+def test_postpone_hints_start_from_the_booked_day():
+    from datetime import date
+    from rlprenota.core.models import Appointment
+    session = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60, posticipa=True), None, None)
+    session.current_appointment = Appointment("19/05/2027 - 08:00", "Varese", None)
+    assert session.portal_hints().start_from == date(2027, 5, 19)
+    assert session.max_result_pages() == runner.POSTPONE_RESULT_PAGES
+    normal = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60), None, None)
+    normal.current_appointment = session.current_appointment
+    assert normal.portal_hints().start_from is None and normal.max_result_pages() == portal.MAX_RESULT_PAGES

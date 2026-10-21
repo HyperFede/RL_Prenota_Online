@@ -56,6 +56,10 @@
       <label>Dal <input type="date" name="start_date" value="{{ values.start_date or '' }}" {{ err('start_date') }}></label>
       <label>Entro il <input type="date" name="end_date" value="{{ values.end_date or '' }}" {{ err('end_date') }}></label>
     </div>
+    <label class="check"><input type="checkbox" name="posticipa" {% if values.posticipa %}checked{% endif %} {{ err('posticipa') }}>
+      Posticipa: cerca un appuntamento più tardi di quello già prenotato</label>
+    <p class="muted">Con «Posticipa» la ricerca accetta solo date successive all'appuntamento attuale, fino a
+      «Entro il» (se vuoto: fino a un mese dopo l'appuntamento). Dopo la prenotazione la ricerca si conclude.</p>
     <div class="row" {{ err('weekdays') }}>
       {% for d in weekdays %}<label class="chip"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ checked('weekdays', loop.index0 | string) }}> {{ d }}</label>{% endfor %}
     </div>

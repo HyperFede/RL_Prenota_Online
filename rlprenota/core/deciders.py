@@ -14,7 +14,9 @@ log = logging.getLogger(__name__)
 
 def proposal_text(session, slot, footer):
     header = "🏥 DISPONIBILITÀ TROVATA"
-    if session.current_appointment is not None:
+    if session.current_appointment is not None and getattr(session.prefs, "posticipa", False):
+        context = f"⏩ Posticipo dell'appuntamento attuale: {session.current_appointment.date}"
+    elif session.current_appointment is not None:
         context = f"🔁 Appuntamento attuale: {session.current_appointment.date}"
     else:
         context = "🆕 Prima prenotazione (la ricetta non ha ancora un appuntamento)"

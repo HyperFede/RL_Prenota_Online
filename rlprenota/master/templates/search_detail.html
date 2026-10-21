@@ -22,6 +22,8 @@
       {% if s.settings.start_date %}dal {{ s.settings.start_date | itdate }} {% endif %}{% if s.settings.end_date %}entro il {{ s.settings.end_date | itdate }}{% endif %}
       {% if s.settings.weekdays %}· {% for d in s.settings.weekdays %}{{ weekdays[d] }}{% if not loop.last %} {% endif %}{% endfor %}{% endif %}
       {% if s.settings.time_from or s.settings.time_to %}· {{ s.settings.time_from or "00:00" }}–{{ s.settings.time_to or "23:59" }}{% endif %}</dd>
+    {% if s.settings.posticipa %}<dt>Modalità</dt><dd>Posticipa: solo date dopo l'appuntamento attuale,
+      {% if s.settings.end_date %}entro il {{ s.settings.end_date | itdate }}{% else %}fino a un mese dopo{% endif %}</dd>{% endif %}
     {% if s.has_secrets %}
     <dt>Codice fiscale</dt><dd>{{ s.masked.codice_fiscale }}</dd>
     <dt>Ricetta</dt><dd>{{ s.masked.ricetta }}</dd>

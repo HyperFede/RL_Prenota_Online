@@ -53,6 +53,7 @@ def session_for(provinces):
     s = SimpleNamespace(driver=None, ignored_exceptions=IGNORED, prefs=prefs, filter=prefs.build_filter(),
                         before_search=None, open=mock.Mock())
     s.provinces = s.filter.provinces_to_search
+    s.portal_hints = s.filter.portal_hints
     return s
 
 

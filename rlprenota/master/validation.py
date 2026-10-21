@@ -142,10 +142,11 @@ class SearchSettings:
     time_from: str = ""
     time_to: str = ""
     refresh_seconds: int = 300
-    dry_run: bool = True
+    dry_run: bool = False
     visita_controllo: object = None
     telegram_timeout: int = 15
     continua_dopo_prenotazione: bool = False
+    posticipa: bool = False       # look for a slot after the booked one (up to end_date, default + 1 month)
 
     @classmethod
     def from_form(cls, form, today=None):
@@ -198,6 +199,11 @@ class SearchSettings:
         if time_from and time_to and time_to < time_from:
             raise ValidationError("time_to", "L'orario di fine precede quello di inizio")
 
+        posticipa = form.get("posticipa") in ("on", "true", "1", True)
+        continua = form.get("continua_dopo_prenotazione") in ("on", "true", "1", True)
+        if posticipa and continua:
+            raise ValidationError("posticipa", "«Posticipa» e «continua a cercare dopo aver prenotato» non si possono "
+                                               "usare insieme: dopo aver posticipato la ricerca si conclude")
         controllo = {"si": True, "no": False}.get((form.get("visita_controllo") or "").strip().lower())
         return cls(label=label, location_mode=mode.value, province=province, home_comune=home, max_km=max_km,
                    facilities=facilities, start_date=start.isoformat() if start else "", end_date=end.isoformat() if end else "",
@@ -206,7 +212,7 @@ class SearchSettings:
                    dry_run=form.get("dry_run") in ("on", "true", "1", True),
                    visita_controllo=controllo,
                    telegram_timeout=_parse_int(form, "telegram_timeout", 1, 120, 15),
-                   continua_dopo_prenotazione=form.get("continua_dopo_prenotazione") in ("on", "true", "1", True))
+                   continua_dopo_prenotazione=continua, posticipa=posticipa)
 
     def to_json(self):
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
@@ -224,4 +230,4 @@ class SearchSettings:
             telegram_timeout_minuti=self.telegram_timeout, continua_dopo_prenotazione=self.continua_dopo_prenotazione,
             location_mode=self.location_mode, home_comune=self.home_comune, max_km=self.max_km or None,
             facilities=self.facilities, weekdays=set(self.weekdays) if self.weekdays else None,
-            time_from=self.time_from or None, time_to=self.time_to or None)
+            time_from=self.time_from or None, time_to=self.time_to or None, posticipa=self.posticipa)
