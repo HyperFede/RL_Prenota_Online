@@ -290,7 +290,7 @@ def test_db_decision_store_behaves_like_the_file_store(repo, two_users):
 
 def test_a_postpone_search_ends_with_its_booking(repo, two_users, db):
     a, b = two_users
-    search_id = repo.create(a, settings(end_date="2027-12-31", posticipa="on"), SECRETS)
+    search_id = repo.create(a, settings(end_date="2027-12-31", direzione="posticipa"), SECRETS)
     execute(db, "UPDATE searches SET current_appointment = '20/02/2027 - 10:00' WHERE id = ?", (search_id,))
     repo.finish(search_id, "booked", "Prenotato")
     assert "posticipare" in repo.continuable(row(db, search_id), today=date(2027, 1, 15))

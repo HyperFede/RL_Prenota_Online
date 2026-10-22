@@ -9,6 +9,7 @@ from rlprenota.core import portal
 from rlprenota.core.decisions import ACCEPT, BOOKED, EXPIRED, REJECT
 from rlprenota.core.errors import LoginRejected, NoAvailability, PortalChanged, PortalError, PortalHiccup
 from rlprenota.core.filters import Verdict
+from rlprenota.core.models import ANTICIPA, ENTRAMBE, POSTICIPA
 
 log = logging.getLogger(__name__)
 POSTPONE_RESULT_PAGES = 30
@@ -41,7 +42,7 @@ class SearchSession:
             try:
                 self.mode, self.current_appointment = portal.open_search_flow(
                     self.driver, self.prescription, self.prefs, self.ignored_exceptions, self.ask)
-                if getattr(self.prefs, "posticipa", False) and self.current_appointment is None:
+                if self.direction == POSTICIPA and self.current_appointment is None:
                     raise LoginRejected("la ricetta non ha un appuntamento prenotato da posticipare: disattiva "
                                         "«Posticipa» per prenotare la prima data utile")
                 return
@@ -69,8 +70,13 @@ class SearchSession:
         return self.filter.provinces_to_search()
 
     @property
+    def direction(self):
+        return getattr(self.prefs, "direzione", ANTICIPA) or ANTICIPA
+
+    @property
     def postponing(self):
-        return bool(getattr(self.prefs, "posticipa", False)) and self.current_appointment is not None
+        """Slots after the booked appointment are wanted (postpone or hybrid mode)."""
+        return self.direction in (POSTICIPA, ENTRAMBE) and self.current_appointment is not None
 
     def postpone_limit(self):
         """Latest acceptable slot when postponing: the end date, or one month after the booked appointment."""
@@ -80,16 +86,19 @@ class SearchSession:
 
     def is_better(self, slot):
         verdict = self.filter.accepts(slot)
-        if not verdict.ok:
+        if not verdict.ok or self.current_appointment is None:
             return verdict
-        if self.postponing:
-            if slot.when <= self.current_appointment.get_datetime():
+        booked = self.current_appointment.get_datetime()
+        if slot.when == booked:
+            return Verdict(False, "è l'appuntamento attuale")
+        if slot.when < booked:
+            if self.direction == POSTICIPA:
                 return Verdict(False, "non successivo all'appuntamento attuale")
-            if slot.when > self.postpone_limit():
-                return Verdict(False, "oltre il limite per posticipare")
             return verdict
-        if self.current_appointment is not None and slot.when >= self.current_appointment.get_datetime():
+        if self.direction == ANTICIPA:
             return Verdict(False, "non precedente all'appuntamento attuale")
+        if slot.when > self.postpone_limit():
+            return Verdict(False, "oltre il limite per posticipare")
         return verdict
 
     def upper_bound(self):
@@ -104,12 +113,13 @@ class SearchSession:
 
     def portal_hints(self):
         hints = self.filter.portal_hints()
-        # When postponing, ask the portal for results from the booked day: the wanted slots come after it
-        hints.start_from = self.current_appointment.get_datetime().date() if self.postponing else None
+        # Only postponing: ask the portal for results from the booked day (hybrid needs the earlier ones too)
+        hints.start_from = (self.current_appointment.get_datetime().date()
+                            if self.postponing and self.direction == POSTICIPA else None)
         return hints
 
     def max_result_pages(self):
-        # If the portal ignores the start date, the later slots are further down the list
+        # Later slots are further down the list (the portal may ignore the start date; hybrid doesn't set it)
         return POSTPONE_RESULT_PAGES if self.postponing else portal.MAX_RESULT_PAGES
 
 

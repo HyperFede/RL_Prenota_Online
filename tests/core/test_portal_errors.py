@@ -125,7 +125,7 @@ def test_missing_start_date_field_is_not_an_error(load_html):
 
 
 def test_postpone_without_a_booked_appointment_asks_the_user():
-    prefs = SearchPreferences(["BERGAMO"], "", "", 60, posticipa=True)
+    prefs = SearchPreferences(["BERGAMO"], "", "", 60, direzione="posticipa")
     session = runner.SearchSession(None, None, prefs, None, None)
     with mock.patch.object(portal, "open_search_flow", return_value=(portal.MODE_NEW, None)):
         with pytest.raises(LoginRejected, match="posticipare"):
@@ -142,10 +142,21 @@ def test_one_month_after():
 def test_postpone_hints_start_from_the_booked_day():
     from datetime import date
     from rlprenota.core.models import Appointment
-    session = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60, posticipa=True), None, None)
+    session = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60, direzione="posticipa"), None, None)
     session.current_appointment = Appointment("19/05/2027 - 08:00", "Varese", None)
     assert session.portal_hints().start_from == date(2027, 5, 19)
     assert session.max_result_pages() == runner.POSTPONE_RESULT_PAGES
     normal = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60), None, None)
     normal.current_appointment = session.current_appointment
     assert normal.portal_hints().start_from is None and normal.max_result_pages() == portal.MAX_RESULT_PAGES
+
+
+def test_hybrid_keeps_the_portal_start_date_and_walks_deeper():
+    from rlprenota.core.models import Appointment
+    session = runner.SearchSession(None, None, SearchPreferences(["BERGAMO"], "", "", 60, direzione="entrambe"), None, None)
+    session.current_appointment = Appointment("19/05/2027 - 08:00", "Varese", None)
+    assert session.portal_hints().start_from is None                   # the earlier slots are wanted too
+    assert session.max_result_pages() == runner.POSTPONE_RESULT_PAGES
+    with mock.patch.object(portal, "open_search_flow", return_value=(portal.MODE_NEW, None)):
+        session.open()                                                 # nothing booked yet: a first booking
+    assert session.current_appointment is None

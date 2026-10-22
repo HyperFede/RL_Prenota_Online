@@ -6,7 +6,7 @@ import logging
 import time
 
 from rlprenota.core.decisions import ACCEPT, ACCEPTED, BOOKED, REJECT
-from rlprenota.core.models import Slot
+from rlprenota.core.models import ANTICIPA, ENTRAMBE, POSTICIPA, Slot
 from rlprenota.telegram import TelegramBot, TelegramError
 
 log = logging.getLogger(__name__)
@@ -14,8 +14,15 @@ log = logging.getLogger(__name__)
 
 def proposal_text(session, slot, footer):
     header = "🏥 DISPONIBILITÀ TROVATA"
-    if session.current_appointment is not None and getattr(session.prefs, "posticipa", False):
+    direction = getattr(session.prefs, "direzione", ANTICIPA)
+    if session.current_appointment is not None and direction == POSTICIPA:
         context = f"⏩ Posticipo dell'appuntamento attuale: {session.current_appointment.date}"
+    elif session.current_appointment is not None and direction == ENTRAMBE:
+        try:
+            side = "Prima" if slot.when < session.current_appointment.get_datetime() else "Dopo"
+        except ValueError:
+            side = "Prima o dopo"
+        context = f"🔀 {side} dell'appuntamento attuale: {session.current_appointment.date}"
     elif session.current_appointment is not None:
         context = f"🔁 Appuntamento attuale: {session.current_appointment.date}"
     else:

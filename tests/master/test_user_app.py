@@ -129,7 +129,7 @@ def test_new_search_form_defaults(client, auth, notifier):
     page = client.get(url("searches/new")).text
     assert re.search(r'value="provinces" id="mode-provinces"\s+checked', page)
     assert 'name="dry_run" >' in page and 'name="dry_run" checked' not in page     # books for real by default
-    assert 'name="posticipa" ' in page and 'name="posticipa" checked' not in page
+    assert re.search(r'name="direzione" value="anticipa"\s+checked', page)               # normal mode by default
 
 
 def test_create_search_and_secrets_never_shown(client, auth, notifier):

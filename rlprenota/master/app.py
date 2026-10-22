@@ -357,7 +357,7 @@ def create_user_app(services, prefix):
                   "time_from": s.time_from, "time_to": s.time_to, "refresh_seconds": str(s.refresh_seconds),
                   "dry_run": "on" if s.dry_run else "", "visita_controllo": {True: "si", False: "no"}.get(s.visita_controllo, ""),
                   "telegram_timeout": str(s.telegram_timeout), "continua_dopo_prenotazione": "on" if s.continua_dopo_prenotazione else "",
-                  "posticipa": "on" if s.posticipa else ""}
+                  "direzione": s.direzione}
         return render(request, "search_form.html", user=user, values=values, editing=True, s=view)
 
     @app.post(f"{base}/searches/{{search_id}}/edit")
