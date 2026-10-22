@@ -78,3 +78,12 @@ class ComuniIndex:
         found = {c.province for c in self._all if haversine_km(origin.lat, origin.lon, c.lat, c.lon) <= km}
         found.add(origin.province)
         return sorted(found)
+
+
+def real_province(comune, searched):
+    """Province of a facility's comune (the portal's names), or `searched` if the comune is unknown.
+
+    A slot's identity includes its province: taking it from the comune keeps it right even if the page
+    still showed the previous province's results when they were read."""
+    found = ComuniIndex.load().find(comune)
+    return found.province if found else searched

@@ -4,6 +4,7 @@
   python -m rlprenota.master.manage invite NAME --login L [--admin]
   python -m rlprenota.master.manage users
   python -m rlprenota.master.manage resume                    resume searches after a global pause
+  python -m rlprenota.master.manage fix-provinces             relabel/delete slots saved in the wrong province
 """
 import argparse
 import os
@@ -58,6 +59,7 @@ def main(argv=None, env=None):
     p_invite.add_argument("--admin", action="store_true")
     sub.add_parser("users")
     sub.add_parser("resume")
+    sub.add_parser("fix-provinces")
     args = parser.parse_args(argv)
 
     if args.command == "init":
@@ -77,6 +79,11 @@ def main(argv=None, env=None):
     elif args.command == "resume":
         services.scheduler.resume_global()
         print("Ricerche riprese.")
+    elif args.command == "fix-provinces":
+        from rlprenota.geo.distance import real_province
+        counts = services.searches.repair_provinces(real_province)
+        print(f"Appuntamenti con la provincia sbagliata: {counts['deleted']} doppioni eliminati, "
+              f"{counts['relabelled']} corretti.")
     return 0
 
 

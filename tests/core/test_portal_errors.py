@@ -160,3 +160,53 @@ def test_hybrid_keeps_the_portal_start_date_and_walks_deeper():
     with mock.patch.object(portal, "open_search_flow", return_value=(portal.MODE_NEW, None)):
         session.open()                                                 # nothing booked yet: a first booking
     assert session.current_appointment is None
+
+
+# --- results of the previous province must never be read as the current one's ---
+
+def _slot(when, comune, sede="Ospedale"):
+    return {"when": when, "azienda": "ASST", "comune": comune, "sede": sede}
+
+
+def test_slot_province_comes_from_its_comune(load_html):
+    from tests.fakes import portal_page
+    driver = load_html(portal_page([_slot("05/11/2026 - 08:30", "BREGNANO"), _slot("06/11/2026 - 08:30", "NOWHERE")]))
+    slots = portal.extract_slots(driver, "MILANO CITTA'")
+    assert [s.provincia for s in slots] == ["COMO", "MILANO CITTA'"]   # unknown comune: the searched province
+
+
+def test_same_appointment_has_one_identity_whatever_was_searched(load_html):
+    from tests.fakes import portal_page
+    driver = load_html(portal_page([_slot("05/11/2026 - 08:30", "MANERBIO")]))
+    seen_as_brescia = portal.extract_slots(driver, "BRESCIA")[0]
+    seen_as_como = portal.extract_slots(driver, "COMO")[0]                # stale read during the next search
+    assert seen_as_como.slot_id == seen_as_brescia.slot_id and seen_as_como.provincia == "BRESCIA"
+
+
+def test_outcome_waits_until_the_previous_list_is_replaced(load_html):
+    from tests.fakes import portal_page
+    driver = load_html(portal_page([_slot("05/11/2026 - 08:30", "MANERBIO")]))
+    stale = portal.results_fingerprint(driver)
+    assert "MANERBIO" in stale
+    assert portal.check_search_outcome(driver, "COMO", timeout=1.5, stale=stale) == "TIMEOUT"
+    driver.execute_script("setTimeout(function () { SLOTS = [{when: '07/11/2026 - 10:00', azienda: 'ASST', "
+                          "comune: 'BREGNANO', sede: 'Radiologia'}]; page = 0; render(); }, 1000);")
+    assert portal.check_search_outcome(driver, "COMO", timeout=5, stale=stale) == "RESULTS"
+    assert [s.comune for s in portal.extract_slots(driver, "COMO")] == ["BREGNANO"]
+
+
+def test_runner_checks_for_stale_results_only_after_another_province():
+    prefs = SearchPreferences(["BERGAMO", "BRESCIA"], "", "", 60)
+    session = SimpleNamespace(driver=None, ignored_exceptions=IGNORED, prefs=prefs, filter=prefs.build_filter(),
+                              before_search=None, open=mock.Mock())
+    session.provinces = session.filter.provinces_to_search
+    session.portal_hints = session.filter.portal_hints
+    outcomes = mock.Mock(return_value="RESULTS")
+    with mock.patch.object(portal, "search_in_province", return_value=True), \
+            mock.patch.object(portal, "results_fingerprint", return_value="lista di BERGAMO"), \
+            mock.patch.object(portal, "check_search_outcome", outcomes), \
+            mock.patch.object(portal, "cleanup_ui_for_next_search"), \
+            mock.patch.object(runner, "process_results", return_value="NEXT"):
+        runner.run_cycle(session)
+    stale = [c.kwargs.get("stale") for c in outcomes.call_args_list]
+    assert stale == ["", "lista di BERGAMO"]       # first province: nothing of this cycle on the page yet

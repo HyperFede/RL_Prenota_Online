@@ -296,3 +296,35 @@ def test_a_postpone_search_ends_with_its_booking(repo, two_users, db):
     assert "posticipare" in repo.continuable(row(db, search_id), today=date(2027, 1, 15))
     with pytest.raises(LimitReached):
         repo.reopen(search_id, b, today=date(2027, 1, 15))
+
+
+def test_repair_slots_saved_in_the_wrong_province(repo, two_users, db):
+    from rlprenota.core.models import Slot
+    from rlprenota.geo.distance import real_province
+    a, _ = two_users
+    search_id = repo.create(a, settings(end_date="2027-12-31"), SECRETS)
+    done = booked(repo, db, a, "20/02/2027 - 10:00")                 # closed searches are left alone
+
+    def slot(provincia, when="05/11/2026 08:30", comune="MANERBIO"):
+        return Slot.from_dict({"when": when, "azienda": "ASST DEL GARDA", "sede": "POLIAMBULATORI", "comune": comune,
+                               "provincia": provincia})
+    right, wrong = slot("BRESCIA"), slot("COMO")                     # read while searching the next province
+    only_wrong = slot("COMO", when="06/11/2026 09:00")                # discarded only under the wrong label
+    fine = slot("COMO", comune="BREGNANO")
+    store = repo.decisions(search_id)
+    for s in (right, wrong, only_wrong, fine):
+        store.discard(s)
+    store.record_proposal(right, 1)
+    store.set_status(right.slot_id, "expired")
+    store.record_proposal(wrong, 2)
+    store.set_status(wrong.slot_id, "rejected")
+    repo.decisions(done).discard(wrong)
+
+    assert repo.repair_provinces(real_province) == {"deleted": 2, "relabelled": 1}
+    store = repo.decisions(search_id)
+    assert set(store.discarded) == {right.slot_id, slot("BRESCIA", when="06/11/2026 09:00").slot_id, fine.slot_id}
+    assert store.is_discarded(only_wrong) is False and store.is_discarded(slot("BRESCIA", "06/11/2026 09:00"))
+    assert set(store.proposals) == {right.slot_id}
+    assert store.proposals[right.slot_id]["status"] == "rejected"   # the stronger decision survives the merge
+    assert wrong.slot_id in repo.decisions(done).discarded
+    assert repo.repair_provinces(real_province) == {"deleted": 0, "relabelled": 0}   # idempotent

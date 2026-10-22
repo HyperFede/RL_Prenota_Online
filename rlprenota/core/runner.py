@@ -242,12 +242,15 @@ def run_cycle(session):
     hints = session.portal_hints()
     provinces = list(session.provinces())
     index, retried, fresh_login, skipped_in_a_row = 0, False, False, 0
+    shown_province = None    # whose results the page shows (None: none of this cycle's)
     while index < len(provinces):
         prov = provinces[index]
         log.info(f"\n>>> Ricerca nella provincia: {prov} <<<")
         if session.before_search:
             session.before_search()
 
+        # The previous province's list must be gone before the results are read (same province: may be identical)
+        previous_results = portal.results_fingerprint(driver) if shown_province not in (None, prov) else ""
         try:
             searched = portal.search_in_province(driver, ignored_exceptions, prov, session.prefs, hints)
         except (PortalChanged, PortalHiccup) as e:
@@ -257,6 +260,7 @@ def run_cycle(session):
             log.info(f"-> {prov}: pagina inattesa ({str(e)[:120]}), accedo di nuovo e riprovo...")
             retried = True
             session.open(attempts=3)
+            shown_province = None
             fresh_login = True
             continue
         except NoAvailability as e:
@@ -271,6 +275,7 @@ def run_cycle(session):
                 retried = True                      # log in again to get the form back, then retry this province
             try:
                 session.open(attempts=3)
+                shown_province = None
             except NoAvailability:
                 return CONTINUE
             fresh_login = True
@@ -283,12 +288,13 @@ def run_cycle(session):
             portal.cleanup_ui_for_next_search(driver, ignored_exceptions)
             continue
 
-        outcome = portal.check_search_outcome(driver, prov)
+        outcome = portal.check_search_outcome(driver, prov, stale=previous_results)
         if outcome == "TIMEOUT":
             log.info(f"L'interfaccia in {prov} sta impiegando più tempo del previsto, riprovo per altri 15 secondi...")
-            outcome = portal.check_search_outcome(driver, prov, timeout=15)
+            outcome = portal.check_search_outcome(driver, prov, timeout=15, stale=previous_results)
 
         if outcome == "RESULTS":
+            shown_province = prov
             log.info(f"\n-> Trovati appuntamenti in {prov}! Elaborazione...")
             result = process_results(session, prov)
             if result == "STOP":
@@ -297,6 +303,7 @@ def run_cycle(session):
                 # The page is no longer on the search results (booking page or error): log in again
                 log.info("-> Riparto dalla pagina iniziale del portale...")
                 session.open(attempts=3)
+                shown_province = None
                 continue
         elif outcome == "ERROR":
             log.info(f"\n-> Nessun appuntamento utile trovato in {prov}.")
