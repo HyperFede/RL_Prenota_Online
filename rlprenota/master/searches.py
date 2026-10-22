@@ -12,6 +12,17 @@ RUNNING = ("active", "waiting")          # statuses that use worker time and cou
 ENDED = ("booked", "expired")
 # When two records of one appointment are merged, the stronger decision wins
 STATUS_STRENGTH = {"pending": 1, "expired": 2, "rejected": 3, "accepted": 4, "booked": 5}
+# Static SQL for repair_provinces, per table
+REPAIR_SQL = {
+    "proposals": {"all": "SELECT * FROM proposals WHERE search_id = ?",
+                  "one": "SELECT * FROM proposals WHERE search_id = ? AND slot_id = ?",
+                  "relabel": "UPDATE proposals SET slot_id = ?, slot_json = ? WHERE search_id = ? AND slot_id = ?",
+                  "delete": "DELETE FROM proposals WHERE search_id = ? AND slot_id = ?"},
+    "discarded": {"all": "SELECT * FROM discarded WHERE search_id = ?",
+                  "one": "SELECT * FROM discarded WHERE search_id = ? AND slot_id = ?",
+                  "relabel": "UPDATE discarded SET slot_id = ?, slot_json = ? WHERE search_id = ? AND slot_id = ?",
+                  "delete": "DELETE FROM discarded WHERE search_id = ? AND slot_id = ?"},
+}
 DEFAULT_MAX_ACTIVE_PER_USER = 3
 DEFAULT_MAX_ACTIVE_TOTAL = 10
 IDLE_EXPIRY_SECONDS = 60 * 86400
@@ -273,25 +284,23 @@ class SearchRepo:
             open_ids = [r["id"] for r in conn.execute("SELECT id FROM searches WHERE status NOT IN (?, ?)", ENDED)]
             for search_id in open_ids:
                 for table in ("proposals", "discarded"):
-                    rows = conn.execute(f"SELECT * FROM {table} WHERE search_id = ?", (search_id,)).fetchall()
+                    sql = REPAIR_SQL[table]
+                    rows = conn.execute(sql["all"], (search_id,)).fetchall()
                     for row in rows:
                         data = json.loads(row["slot_json"])
                         right = real_province(data.get("comune"), data.get("provincia"))
                         if right == data.get("provincia"):
                             continue
                         fixed = Slot.from_dict({**data, "provincia": right})
-                        twin = conn.execute(f"SELECT * FROM {table} WHERE search_id = ? AND slot_id = ?",
-                                            (search_id, fixed.slot_id)).fetchone()
+                        twin = conn.execute(sql["one"], (search_id, fixed.slot_id)).fetchone()
                         if twin is None:
-                            conn.execute(f"UPDATE {table} SET slot_id = ?, slot_json = ? WHERE search_id = ? AND slot_id = ?",
-                                         (fixed.slot_id, json.dumps(fixed.to_dict()), search_id, row["slot_id"]))
+                            conn.execute(sql["relabel"], (fixed.slot_id, json.dumps(fixed.to_dict()), search_id, row["slot_id"]))
                             counts["relabelled"] += 1
                             continue
                         if table == "proposals" and STATUS_STRENGTH.get(row["status"], 0) > STATUS_STRENGTH.get(twin["status"], 0):
                             conn.execute("UPDATE proposals SET status = ? WHERE search_id = ? AND slot_id = ?",
                                          (row["status"], search_id, fixed.slot_id))
-                        conn.execute(f"DELETE FROM {table} WHERE search_id = ? AND slot_id = ?",
-                                     (search_id, row["slot_id"]))
+                        conn.execute(sql["delete"], (search_id, row["slot_id"]))
                         counts["deleted"] += 1
             self.db.audit("slots_repaired", None, json.dumps(counts), conn=conn)
         return counts
