@@ -4,12 +4,14 @@ import time
 from datetime import date, datetime
 
 from rlprenota.core.decisions import MemoryDecisionStore
-from rlprenota.core.models import ANTICIPA
+from rlprenota.core.models import ANTICIPA, Slot
 from rlprenota.master.crypto import new_token
 from rlprenota.master.validation import SearchSecrets, SearchSettings
 
 RUNNING = ("active", "waiting")          # statuses that use worker time and count against the limits (see _check_limits)
 ENDED = ("booked", "expired")
+# When two records of one appointment are merged, the stronger decision wins
+STATUS_STRENGTH = {"pending": 1, "expired": 2, "rejected": 3, "accepted": 4, "booked": 5}
 DEFAULT_MAX_ACTIVE_PER_USER = 3
 DEFAULT_MAX_ACTIVE_TOTAL = 10
 IDLE_EXPIRY_SECONDS = 60 * 86400
@@ -260,6 +262,39 @@ class SearchRepo:
             conn.execute("""UPDATE searches SET status = 'active', consecutive_failures = 0, updated_at = ?, next_run_at = ?,
                             ended_at = NULL, last_result = ? WHERE id = ?""", (now, now, f"Ricerca ripresa {who}", search_id))
             self.db.audit("search_reopened", actor_id, search_id, conn=conn)
+
+    def repair_provinces(self, real_province):
+        """One-off repair: slots saved with the province being searched instead of their own (read while the
+        page still showed the previous province's results). For the searches still running: a slot whose
+        correctly labelled twin exists is deleted (keeping the stronger decision), otherwise it is relabelled,
+        so the user's decision keeps applying to that appointment. Returns {"deleted": n, "relabelled": n}."""
+        counts = {"deleted": 0, "relabelled": 0}
+        with self.db.tx() as conn:
+            open_ids = [r["id"] for r in conn.execute("SELECT id FROM searches WHERE status NOT IN (?, ?)", ENDED)]
+            for search_id in open_ids:
+                for table in ("proposals", "discarded"):
+                    rows = conn.execute(f"SELECT * FROM {table} WHERE search_id = ?", (search_id,)).fetchall()
+                    for row in rows:
+                        data = json.loads(row["slot_json"])
+                        right = real_province(data.get("comune"), data.get("provincia"))
+                        if right == data.get("provincia"):
+                            continue
+                        fixed = Slot.from_dict({**data, "provincia": right})
+                        twin = conn.execute(f"SELECT * FROM {table} WHERE search_id = ? AND slot_id = ?",
+                                            (search_id, fixed.slot_id)).fetchone()
+                        if twin is None:
+                            conn.execute(f"UPDATE {table} SET slot_id = ?, slot_json = ? WHERE search_id = ? AND slot_id = ?",
+                                         (fixed.slot_id, json.dumps(fixed.to_dict()), search_id, row["slot_id"]))
+                            counts["relabelled"] += 1
+                            continue
+                        if table == "proposals" and STATUS_STRENGTH.get(row["status"], 0) > STATUS_STRENGTH.get(twin["status"], 0):
+                            conn.execute("UPDATE proposals SET status = ? WHERE search_id = ? AND slot_id = ?",
+                                         (row["status"], search_id, fixed.slot_id))
+                        conn.execute(f"DELETE FROM {table} WHERE search_id = ? AND slot_id = ?",
+                                     (search_id, row["slot_id"]))
+                        counts["deleted"] += 1
+            self.db.audit("slots_repaired", None, json.dumps(counts), conn=conn)
+        return counts
 
     def decisions(self, search_id):
         return DbDecisionStore(self.db, search_id)

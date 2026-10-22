@@ -23,6 +23,7 @@ from selenium.common.exceptions import WebDriverException
 
 from rlprenota.core.errors import ErrorKind, LoginRejected, NoAvailability, PortalChanged, PortalError, PortalHiccup, classify
 from rlprenota.core.models import Appointment, Slot
+from rlprenota.geo.distance import real_province
 
 log = logging.getLogger(__name__)
 
@@ -278,6 +279,20 @@ return out;
 """
 
 
+RESULTS_FINGERPRINT_JS = """
+return Array.prototype.filter.call(document.querySelectorAll('ul.lista-appuntamenti > li.appuntamento'),
+    function (li) { return li.offsetParent; }).map(function (li) { return li.innerText; }).join('\\n||\\n');
+"""
+
+
+def results_fingerprint(driver):
+    """The result list currently shown ("" if none): a new search is done only once the list differs."""
+    try:
+        return driver.execute_script(RESULTS_FINGERPRINT_JS) or ""
+    except WebDriverException:
+        return ""
+
+
 def parse_slot(raw, province):
     fields = raw.get("fields") or {}
     match = DATE_TIME_RE.search(fields.get("data e ora") or raw.get("text") or "")
@@ -287,7 +302,8 @@ def parse_slot(raw, province):
         when = datetime.strptime(f"{match.group(1)} {match.group(2)}", "%d/%m/%Y %H:%M")
     except ValueError:
         return None
-    return Slot(when, fields.get("azienda"), fields.get("presentarsi in"), fields.get("comune"), province, raw.get("index"))
+    return Slot(when, fields.get("azienda"), fields.get("presentarsi in"), fields.get("comune"),
+                real_province(fields.get("comune"), province), raw.get("index"))
 
 
 def extract_slots(driver, province):
@@ -302,6 +318,10 @@ def extract_slots(driver, province):
             log.info(f"-> Impossibile leggere data/ora da: {raw.get('text', '')[:100].replace(chr(10), ' ')}...")
             continue
         slots.append(slot)
+    elsewhere = [s for s in slots if s.provincia != province]
+    if elsewhere:
+        log.info(f"-> {len(elsewhere)} risultati su {len(slots)} non sono in {province} "
+                 f"(es. {elsewhere[0].comune}, {elsewhere[0].provincia}): uso la provincia del comune")
     return slots
 
 
@@ -396,7 +416,11 @@ def book_slot(driver, ignored_exceptions, slot, dry_run):
     return "failed", "nessuna conferma ricevuta dal portale entro 90 secondi (controlla sul sito se la prenotazione è avvenuta)"
 
 
-def check_search_outcome(driver, current_province, timeout=15):
+def check_search_outcome(driver, current_province, timeout=15, stale=""):
+    """Wait for the outcome of the search just submitted: "RESULTS", "ERROR" (nothing found) or "TIMEOUT".
+
+    `stale` is the result list shown before submitting: while the page still shows exactly that list,
+    the new results are not there yet (reading it would attribute the previous province's slots)."""
     start_time = time.time()
     log.info(f"-> Analizzo l'esito della ricerca per {current_province} (Attesa max: {timeout}s)...")
     
@@ -418,7 +442,9 @@ def check_search_outcome(driver, current_province, timeout=15):
             visible_buttons = [b for b in action_buttons if b.is_displayed()]
             
             if visible_results or visible_buttons:
-                # We wiped old results before searching, so any visible results are strictly new.
+                if stale and results_fingerprint(driver) == stale:
+                    time.sleep(0.5)    # still the previous search's list (it can be re-rendered after the purge)
+                    continue
                 return "RESULTS"
                 
         except StaleElementReferenceException:
