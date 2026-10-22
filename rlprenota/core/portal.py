@@ -285,6 +285,34 @@ return Array.prototype.filter.call(document.querySelectorAll('ul.lista-appuntame
 """
 
 
+# Results page heading: "2 Aziende in zona - MILANO PROVINCIA"
+RESULT_ZONES_JS = """
+return Array.prototype.filter.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6'), function (h) {
+    return h.offsetParent !== null; }).map(function (h) {
+    var m = /in zona\\s*-\\s*(.+)$/i.exec((h.innerText || '').trim()); return m ? m[1] : null; }).filter(Boolean);
+"""
+
+
+def result_zones(driver):
+    """Provinces named by the results headings ([] if none): they tell whose results the page shows."""
+    try:
+        return driver.execute_script(RESULT_ZONES_JS) or []
+    except WebDriverException:
+        return []
+
+
+def shows_other_province(driver, province):
+    """The results heading names another known province (an unrecognised name never blocks)."""
+    from rlprenota.geo.distance import ComuniIndex
+    known = {_province_key(p) for p in ComuniIndex.load().provinces()}
+    zones = {_province_key(z) for z in result_zones(driver)}
+    return bool(zones & known) and _province_key(province) not in zones
+
+
+def _province_key(name):
+    return re.sub(r"[^A-Z]", "", unicodedata.normalize("NFKD", name or "").upper())
+
+
 def results_fingerprint(driver):
     """The result list currently shown ("" if none): a new search is done only once the list differs."""
     try:
@@ -442,8 +470,9 @@ def check_search_outcome(driver, current_province, timeout=15, stale=""):
             visible_buttons = [b for b in action_buttons if b.is_displayed()]
             
             if visible_results or visible_buttons:
-                if stale and results_fingerprint(driver) == stale:
-                    time.sleep(0.5)    # still the previous search's list (it can be re-rendered after the purge)
+                # Still the previous search's list (it can be re-rendered after the purge), or its page
+                if (stale and results_fingerprint(driver) == stale) or shows_other_province(driver, current_province):
+                    time.sleep(0.5)
                     continue
                 return "RESULTS"
                 
@@ -451,8 +480,34 @@ def check_search_outcome(driver, current_province, timeout=15, stale=""):
             pass # DOM is updating, try again next loop
             
         time.sleep(0.5)
-    
+
+    log.info(f"-> {current_province}: nessun esito dopo {timeout}s. Stato pagina: {page_state(driver)}")
     return "TIMEOUT"
+
+
+PAGE_STATE_JS = """
+function count(sel, visible) {
+    return Array.prototype.filter.call(document.querySelectorAll(sel), function (e) {
+        return !visible || e.offsetParent !== null; }).length;
+}
+return {path: location.hash.split('?')[0].slice(0, 60),
+        lists: count('.lista-appuntamenti', false), listsVisible: count('.lista-appuntamenti', true),
+        items: count('li.appuntamento', false), itemsVisible: count('li.appuntamento', true),
+        modals: count('.modal-dialog', true),
+        url: location.pathname.slice(0, 60),
+        submit: Array.prototype.map.call(document.querySelectorAll('.submit'), function (b) {
+            return (b.offsetParent !== null ? 'visibile' : 'nascosto') + (b.disabled ? '/disabilitato' : ''); }),
+        headings: Array.prototype.filter.call(document.querySelectorAll('h1,h2,h3,h4,h5'), function (h) {
+            return h.offsetParent !== null; }).map(function (h) { return (h.innerText || '').trim().slice(0, 50); }).slice(0, 6)};
+"""
+
+
+def page_state(driver):
+    """Counts of the result elements on the page (no personal data), to diagnose a search without outcome."""
+    try:
+        return driver.execute_script(PAGE_STATE_JS)
+    except WebDriverException as e:
+        return f"non leggibile ({type(e).__name__})"
 
 
 def fill_contacts_form(driver, search_preferences):

@@ -210,3 +210,17 @@ def test_runner_checks_for_stale_results_only_after_another_province():
         runner.run_cycle(session)
     stale = [c.kwargs.get("stale") for c in outcomes.call_args_list]
     assert stale == ["", "lista di BERGAMO"]       # first province: nothing of this cycle on the page yet
+
+
+def test_results_count_only_under_the_searched_province_heading(load_html):
+    from tests.fakes import portal_page
+    page = portal_page([_slot("05/11/2026 - 08:30", "MANERBIO")]).replace(
+        '<div id="results">', '<h4 id="zona">2 Aziende in zona - BRESCIA</h4><div id="results">')
+    driver = load_html(page)
+    assert portal.check_search_outcome(driver, "COMO", timeout=1.5) == "TIMEOUT"     # still Brescia's page
+    assert portal.check_search_outcome(driver, "BRESCIA", timeout=1.5) == "RESULTS"
+    driver.execute_script("document.getElementById('zona').textContent = '1 Aziende in zona - BRIANZA SUD';")
+    assert portal.check_search_outcome(driver, "MONZA E DELLA BRIANZA", timeout=1.5) == "RESULTS"  # unknown name: no block
+    driver.execute_script("document.getElementById('zona').textContent = '3 Sedi in zona - MILANO CITTA\\'';")
+    assert portal.check_search_outcome(driver, "MILANO CITTA'", timeout=1.5) == "RESULTS"
+    assert portal.check_search_outcome(driver, "MILANO PROVINCIA", timeout=1.5) == "TIMEOUT"
