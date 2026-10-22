@@ -13,6 +13,7 @@ from rlprenota.core.models import ANTICIPA, ENTRAMBE, POSTICIPA
 
 log = logging.getLogger(__name__)
 POSTPONE_RESULT_PAGES = 30
+SLOW_SEARCH_SECONDS = 45     # after the first 15 s
 
 DEFAULT_IGNORED = (NoSuchElementException, StaleElementReferenceException)
 
@@ -290,8 +291,9 @@ def run_cycle(session):
 
         outcome = portal.check_search_outcome(driver, prov, stale=previous_results)
         if outcome == "TIMEOUT":
-            log.info(f"L'interfaccia in {prov} sta impiegando più tempo del previsto, riprovo per altri 15 secondi...")
-            outcome = portal.check_search_outcome(driver, prov, timeout=15, stale=previous_results)
+            # The portal sometimes takes 30 s or more (often the first search after logging in)
+            log.info(f"L'interfaccia in {prov} sta impiegando più tempo del previsto, attendo fino a {SLOW_SEARCH_SECONDS} secondi...")
+            outcome = portal.check_search_outcome(driver, prov, timeout=SLOW_SEARCH_SECONDS, stale=previous_results)
 
         if outcome == "RESULTS":
             shown_province = prov
