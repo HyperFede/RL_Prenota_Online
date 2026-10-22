@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from rlprenota.core.deciders import proposal_text
 from rlprenota.core.decisions import ACCEPTED, BOOKED, REJECT
-from rlprenota.core.models import Slot
+from rlprenota.core.models import Appointment, Slot
 from rlprenota.master.validation import SearchSettings
 from rlprenota.telegram import TelegramError
 
@@ -43,9 +43,9 @@ class ProposalRouter:
         row = self._owner(search_id)
         settings = SearchSettings.from_json(row["settings_json"])
         current = row["current_appointment"] if current_appointment is None else current_appointment
-        context = SimpleNamespace(current_appointment=SimpleNamespace(date=current) if current else None,
+        context = SimpleNamespace(current_appointment=Appointment(current, "", None) if current else None,
                                   prefs=SimpleNamespace(dry_run=settings.dry_run if dry_run is None else dry_run,
-                                                        posticipa=settings.posticipa))
+                                                        direzione=settings.direzione))
         return f"🔎 {settings.label}\n" + proposal_text(context, slot, footer)
 
     @staticmethod

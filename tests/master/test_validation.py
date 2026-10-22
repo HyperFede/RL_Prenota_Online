@@ -96,14 +96,27 @@ def test_radius_and_facilities_settings():
                             {"name": "Ospedale di Circolo", "province": "VARESE"}]
 
 
-def test_postpone_and_dry_run_defaults():
+def test_direction_and_dry_run_defaults():
     base = {"label": "V", "location_mode": "provinces", "province": ["BERGAMO"]}
+    secrets = SearchSecrets.from_form({"codice_fiscale": "MRTMTT25D09F205Z", "tessera": "12345", "ricetta": "0300A1234567890"})
     s = SearchSettings.from_form(base, today=date(2026, 10, 22))
-    assert s.dry_run is False and s.posticipa is False                 # books for real unless asked
-    s = SearchSettings.from_form({**base, "posticipa": "on"}, today=date(2026, 10, 22))
-    assert s.posticipa is True and s.to_preferences(SearchSecrets.from_form({"codice_fiscale": "MRTMTT25D09F205Z", "tessera": "12345", "ricetta": "0300A1234567890"})).posticipa is True
-    with pytest.raises(ValidationError) as e:
-        SearchSettings.from_form({**base, "posticipa": "on", "continua_dopo_prenotazione": "on"}, today=date(2026, 10, 22))
-    assert e.value.field == "posticipa"
-    old = SearchSettings.from_json('{"label": "V", "location_mode": "provinces", "province": ["BERGAMO"], "dry_run": true}')
-    assert old.posticipa is False and old.dry_run is True              # saved searches keep their choice
+    assert s.dry_run is False and s.direzione == "anticipa"            # books for real, earlier dates, unless asked
+    for direzione in ("posticipa", "entrambe"):
+        s = SearchSettings.from_form({**base, "direzione": direzione}, today=date(2026, 10, 22))
+        assert s.direzione == direzione and s.to_preferences(secrets).direzione == direzione
+        with pytest.raises(ValidationError) as e:
+            SearchSettings.from_form({**base, "direzione": direzione, "continua_dopo_prenotazione": "on"},
+                                     today=date(2026, 10, 22))
+        assert e.value.field == "direzione"
+    with pytest.raises(ValidationError):
+        SearchSettings.from_form({**base, "direzione": "sideways"}, today=date(2026, 10, 22))
+    assert SearchSettings.from_form({**base, "continua_dopo_prenotazione": "on"}, today=date(2026, 10, 22)).continua_dopo_prenotazione
+
+
+def test_searches_saved_before_the_hybrid_mode_keep_their_meaning():
+    old = '{"label": "V", "location_mode": "provinces", "province": ["BERGAMO"], "dry_run": true'
+    assert SearchSettings.from_json(old + ', "posticipa": true}').direzione == "posticipa"
+    assert SearchSettings.from_json(old + ', "posticipa": false}').direzione == "anticipa"
+    legacy = SearchSettings.from_json(old + "}")
+    assert legacy.direzione == "anticipa" and legacy.dry_run is True    # saved searches keep their choice
+    assert "posticipa" not in SearchSettings.from_json(legacy.to_json()).to_json()

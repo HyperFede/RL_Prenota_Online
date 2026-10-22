@@ -4,6 +4,7 @@ import time
 from datetime import date, datetime
 
 from rlprenota.core.decisions import MemoryDecisionStore
+from rlprenota.core.models import ANTICIPA
 from rlprenota.master.crypto import new_token
 from rlprenota.master.validation import SearchSecrets, SearchSettings
 
@@ -230,8 +231,8 @@ class SearchRepo:
         """Why a closed search can't be continued, or "" if it can (row from the searches table)."""
         if row["status"] not in ENDED:
             return "La ricerca non è conclusa"
-        if json.loads(row["settings_json"]).get("posticipa"):
-            return "Una ricerca per posticipare si conclude con la prenotazione"
+        if SearchSettings.from_json(row["settings_json"]).direzione != ANTICIPA:
+            return "Una ricerca che può posticipare si conclude con la prenotazione"
         if not self._appointment_ahead(row["current_appointment"]):
             return "La data della prenotazione è già passata (o non è nota)"
         if not self._in_window(row):

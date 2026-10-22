@@ -1,5 +1,6 @@
 """End-to-end tests of the decision/booking flow, in a real headless Chrome on a mock of the portal's results page."""
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -62,9 +63,9 @@ class FlowTest(unittest.TestCase):
         self.driver.get("file://" + page)
 
     def session(self, answers=None, current=None, dry_run=False, telegram=True, timeout_minutes=0.05,
-                start="", end="", state_file=None, terminal_answers=None, posticipa=False):
+                start="", end="", state_file=None, terminal_answers=None, direzione=None):
         prefs = SearchPreferences([PROV], start, end, 1, dry_run, telegram_timeout_minuti=timeout_minutes,
-                                  posticipa=posticipa)
+                                  direzione=direzione)
         if telegram:
             self.fake = self.fake or FakeTelegram()
             self.fake.answers = list(answers or [])
@@ -152,7 +153,7 @@ class FlowTest(unittest.TestCase):
 
     def test_postpone_proposes_only_later_slots_up_to_one_month_after(self):
         self.load()
-        s = self.session(answers=["r", "r"], current="20/11/2026 - 12:00", posticipa=True)
+        s = self.session(answers=["r", "r"], current="20/11/2026 - 12:00", direzione="posticipa")
         self.assertEqual(runner.process_results(s, PROV), "NEXT")
         proposed = self.proposed()
         self.assertEqual(len(proposed), 1)                              # 20/12 10:00; 21/12 is past 20/12 23:59
@@ -161,18 +162,45 @@ class FlowTest(unittest.TestCase):
 
     def test_postpone_up_to_the_end_date_walks_the_result_pages_and_books(self):
         self.load()
-        s = self.session(answers=["r", "r", "a"], current="20/11/2026 - 12:00", end="22/12/2026", posticipa=True)
+        s = self.session(answers=["r", "r", "a"], current="20/11/2026 - 12:00", end="22/12/2026", direzione="posticipa")
         self.assertEqual(runner.process_results(s, PROV), "STOP")
         self.assertEqual(self.booked_index(), 5)                        # 22/12, on the second page
         self.assertEqual(s.current_appointment.date, "22/12/2026 - 10:00")
 
     def test_postpone_never_proposes_the_booked_slot_itself(self):
         self.load()
-        s = self.session(answers=["r"], current="05/11/2026 - 09:00", end="06/11/2026", posticipa=True)
+        s = self.session(answers=["r"], current="05/11/2026 - 09:00", end="06/11/2026", direzione="posticipa")
         runner.process_results(s, PROV)
         proposed = self.proposed()
         self.assertEqual(len(proposed), 1)
         self.assertIn("06/11/2026", proposed[0])
+
+    # --- hybrid (prima o dopo) ---
+
+    def test_hybrid_proposes_earlier_and_later_slots_earliest_first(self):
+        self.load()
+        s = self.session(answers=["r", "r", "r", "r"], current="20/11/2026 - 12:00", direzione="entrambe")
+        self.assertEqual(runner.process_results(s, PROV), "NEXT")
+        proposed = self.proposed()
+        # 05/11 08:30, 05/11 09:00, 06/11 before; 20/12 after (21/12 is past one month after 20/11)
+        dates = [re.search(r"📅 Data: (\S+)", text).group(1) for text in proposed]
+        self.assertEqual(dates, ["05/11/2026", "05/11/2026", "06/11/2026", "20/12/2026"])
+        self.assertIn("Prima dell'appuntamento attuale", proposed[0])
+        self.assertIn("Dopo dell'appuntamento attuale", proposed[3])
+
+    def test_hybrid_books_a_later_slot_up_to_the_end_date(self):
+        self.load()
+        s = self.session(answers=["r", "r", "r", "r", "r", "a"], current="20/11/2026 - 12:00", end="22/12/2026",
+                         direzione="entrambe")
+        self.assertEqual(runner.process_results(s, PROV), "STOP")
+        self.assertEqual(self.booked_index(), 5)                        # 22/12, page 2, after five rejections
+        self.assertEqual(s.current_appointment.date, "22/12/2026 - 10:00")
+
+    def test_hybrid_without_an_appointment_is_a_first_booking(self):
+        self.load()
+        s = self.session(answers=["a"], direzione="entrambe")
+        self.assertEqual(runner.process_results(s, PROV), "STOP")
+        self.assertEqual(self.booked_index(), 0)
 
     # --- no answer / late answers ---
 

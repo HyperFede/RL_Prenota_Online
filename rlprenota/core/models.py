@@ -95,12 +95,19 @@ class Slot:
         return "\n".join(lines)
 
 
+# Search direction, relative to the booked appointment (with no appointment yet, any date is a first booking):
+ANTICIPA = "anticipa"     # earlier than the booked appointment (the normal mode)
+POSTICIPA = "posticipa"   # later: up to end_date, or one month after the appointment
+ENTRAMBE = "entrambe"     # either: earlier, or later within the same limit; the earliest slot first
+DIRECTIONS = (ANTICIPA, POSTICIPA, ENTRAMBE)
+
+
 class SearchPreferences:
     # telegram_token defaults to "" (no Telegram), it is not a hardcoded password
     def __init__(self, province, start_date, end_date, refresh_frequency, dry_run=True, telegram_token="", telegram_chat_id="",  # nosec B107
                  telefono="", email="", visita_controllo=None, telegram_timeout_minuti=15, continua_dopo_prenotazione=False,
                  location_mode="provinces", home_comune="", max_km=None, facilities=None,
-                 weekdays=None, time_from=None, time_to=None, posticipa=False):
+                 weekdays=None, time_from=None, time_to=None, direzione=None):
         self.province = province
         self.start_date = start_date
         self.end_date = end_date
@@ -122,8 +129,8 @@ class SearchPreferences:
         self.weekdays = weekdays          # set of 0 (Monday) .. 6 (Sunday), None = any day
         self.time_from = time_from        # datetime.time or "HH:MM", None = no limit
         self.time_to = time_to
-        # Postpone: look for a slot AFTER the booked appointment (up to end_date, or one month after it)
-        self.posticipa = posticipa
+        # Which side of the booked appointment to search (see DIRECTIONS)
+        self.direzione = direzione or ANTICIPA
     
     def get_start_date_input(self):
         return ''.join(filter(str.isdigit, self.start_date))

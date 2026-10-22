@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
 from rlprenota.core.filters import MAX_KM, LocationMode
-from rlprenota.core.models import SearchPreferences
+from rlprenota.core.models import ANTICIPA, DIRECTIONS, POSTICIPA, SearchPreferences
 from rlprenota.geo.distance import ComuniIndex
 
 PROVINCES = ["BERGAMO", "BRESCIA", "COMO", "CREMONA", "LECCO", "LODI", "MANTOVA", "MILANO CITTA'", "MILANO PROVINCIA",
@@ -146,7 +146,7 @@ class SearchSettings:
     visita_controllo: object = None
     telegram_timeout: int = 15
     continua_dopo_prenotazione: bool = False
-    posticipa: bool = False       # look for a slot after the booked one (up to end_date, default + 1 month)
+    direzione: str = ANTICIPA     # earlier / later (up to end_date, default + 1 month) / either, than the booking
 
     @classmethod
     def from_form(cls, form, today=None):
@@ -199,11 +199,13 @@ class SearchSettings:
         if time_from and time_to and time_to < time_from:
             raise ValidationError("time_to", "L'orario di fine precede quello di inizio")
 
-        posticipa = form.get("posticipa") in ("on", "true", "1", True)
+        direzione = (form.get("direzione") or ANTICIPA).strip()
+        if direzione not in DIRECTIONS:
+            raise ValidationError("direzione", "Modalità non valida")
         continua = form.get("continua_dopo_prenotazione") in ("on", "true", "1", True)
-        if posticipa and continua:
-            raise ValidationError("posticipa", "«Posticipa» e «continua a cercare dopo aver prenotato» non si possono "
-                                               "usare insieme: dopo aver posticipato la ricerca si conclude")
+        if direzione != ANTICIPA and continua:
+            raise ValidationError("direzione", "«Continua a cercare dopo aver prenotato» si può usare solo per anticipare: "
+                                               "posticipando, la ricerca si conclude con la prenotazione")
         controllo = {"si": True, "no": False}.get((form.get("visita_controllo") or "").strip().lower())
         return cls(label=label, location_mode=mode.value, province=province, home_comune=home, max_km=max_km,
                    facilities=facilities, start_date=start.isoformat() if start else "", end_date=end.isoformat() if end else "",
@@ -212,14 +214,17 @@ class SearchSettings:
                    dry_run=form.get("dry_run") in ("on", "true", "1", True),
                    visita_controllo=controllo,
                    telegram_timeout=_parse_int(form, "telegram_timeout", 1, 120, 15),
-                   continua_dopo_prenotazione=continua, posticipa=posticipa)
+                   continua_dopo_prenotazione=continua, direzione=direzione)
 
     def to_json(self):
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
 
     @classmethod
     def from_json(cls, text):
-        return cls(**json.loads(text))
+        data = json.loads(text)
+        if data.pop("posticipa", False) and "direzione" not in data:   # saved before the hybrid mode existed
+            data["direzione"] = POSTICIPA
+        return cls(**data)
 
     def to_preferences(self, secrets):
         def italian(iso):
@@ -230,4 +235,4 @@ class SearchSettings:
             telegram_timeout_minuti=self.telegram_timeout, continua_dopo_prenotazione=self.continua_dopo_prenotazione,
             location_mode=self.location_mode, home_comune=self.home_comune, max_km=self.max_km or None,
             facilities=self.facilities, weekdays=set(self.weekdays) if self.weekdays else None,
-            time_from=self.time_from or None, time_to=self.time_to or None, posticipa=self.posticipa)
+            time_from=self.time_from or None, time_to=self.time_to or None, direzione=self.direzione)

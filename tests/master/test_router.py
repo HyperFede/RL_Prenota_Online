@@ -125,3 +125,19 @@ def test_admin_alerts_are_deduplicated(setup, fake, auth, clock):
     clock.advance(3601)
     router.alert_admin("portal_changed", "🛑 portale cambiato")
     assert len([b for b in fake.sent_to(9000) if "portale" in b["text"]]) == 2
+
+
+@pytest.mark.parametrize("direzione, current, expected", [
+    ("entrambe", "20/11/2026 - 12:00", "🔀 Prima dell'appuntamento attuale: 20/11/2026 - 12:00"),
+    ("entrambe", "01/11/2026 - 12:00", "🔀 Dopo dell'appuntamento attuale: 01/11/2026 - 12:00"),
+    ("posticipa", "01/11/2026 - 12:00", "⏩ Posticipo dell'appuntamento attuale: 01/11/2026 - 12:00"),
+    ("anticipa", "20/11/2026 - 12:00", "🔁 Appuntamento attuale: 20/11/2026 - 12:00"),
+])
+def test_proposal_says_which_side_of_the_booking_it_is(setup, fake, direzione, current, expected):
+    router, _, searches, search_id, owner = setup
+    form = {"label": "Visita", "location_mode": "provinces", "province": ["MILANO CITTA'"], "end_date": "2099-12-31",
+            "direzione": direzione}
+    searches.update(owner, search_id, SearchSettings.from_form(form, today=date(2026, 10, 9)))
+    router.propose(search_id, SLOT, current_appointment=current, dry_run=False, timeout_minutes=15)   # SLOT: 05/11/2026
+    body, _ = proposal_message(fake)
+    assert expected in body["text"]
