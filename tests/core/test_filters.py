@@ -106,15 +106,3 @@ def test_portal_hints_for_native_filters():
     # A window crossing midday must keep both halves enabled
     both = make(time_from=time(11, 0), time_to=time(15, 0)).portal_hints()
     assert both.morning and both.afternoon
-
-
-def test_facility_without_province_searches_every_province():
-    # Saved on the NAS as {"name": ..., "province": ""}: an empty list meant nothing was ever searched
-    f = make(location_mode=LocationMode.FACILITIES,
-             facilities=[{"name": "IRCCS OSPEDALE GALEAZZI SANT'AMBROGIO", "province": ""},
-                         {"name": "VILLA APRICA", "province": "COMO"}])
-    provinces = f.provinces_to_search()
-    assert len(provinces) == 13 and {"MILANO CITTA'", "COMO", "VARESE"} <= set(provinces)
-    galeazzi = slot(sede="IRCCS OSPEDALE GALEAZZI SANT'AMBROGIO", azienda="IRCCS GALEAZZI", prov="MILANO CITTA'")
-    assert f.accepts(galeazzi).ok
-    assert not f.accepts(slot(sede="Ospedale San Carlo", azienda="ASST Santi Paolo e Carlo")).ok

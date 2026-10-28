@@ -88,9 +88,6 @@ class SearchFilter:
         if self.location_mode is LocationMode.RADIUS:
             return self.comuni.provinces_within(self.home.name, self.max_km)
         if self.location_mode is LocationMode.FACILITIES:
-            if any(not facility.get("province") for facility in self.facilities):
-                # A facility without its province could be anywhere: search them all (slower, never empty)
-                return self.comuni.provinces()
             seen = []
             for facility in self.facilities:
                 if facility.get("province") and facility["province"] not in seen:

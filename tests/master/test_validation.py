@@ -120,3 +120,13 @@ def test_searches_saved_before_the_hybrid_mode_keep_their_meaning():
     legacy = SearchSettings.from_json(old + "}")
     assert legacy.direzione == "anticipa" and legacy.dry_run is True    # saved searches keep their choice
     assert "posticipa" not in SearchSettings.from_json(legacy.to_json()).to_json()
+
+
+def test_every_facility_needs_its_province():
+    base = {"label": "V", "location_mode": "facilities"}
+    ok = SearchSettings.from_form({**base, "facilities": "Galeazzi | milano citta'\nVilla Aprica | COMO"}, today=date(2026, 10, 28))
+    assert [f["province"] for f in ok.facilities] == ["MILANO CITTA'", "COMO"]
+    for text in ("IRCCS OSPEDALE GALEAZZI SANT'AMBROGIO\nVILLA APRICA | COMO", "Villa Aprica |", "Villa Aprica | "):
+        with pytest.raises(ValidationError) as e:
+            SearchSettings.from_form({**base, "facilities": text}, today=date(2026, 10, 28))
+        assert e.value.field == "facilities" and "provincia" in e.value.message
