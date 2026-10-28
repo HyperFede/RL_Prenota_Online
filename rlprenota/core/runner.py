@@ -242,6 +242,9 @@ def run_cycle(session):
     driver, ignored_exceptions = session.driver, session.ignored_exceptions
     hints = session.portal_hints()
     provinces = list(session.provinces())
+    if not provinces:
+        # e.g. facilities saved without their province: never report "nothing new" for a search that checks nothing
+        raise LoginRejected("nessuna provincia da cercare: indica la provincia di ogni struttura e salva la ricerca")
     index, retried, fresh_login, skipped_in_a_row = 0, False, False, 0
     shown_province = None    # whose results the page shows (None: none of this cycle's)
     while index < len(provinces):

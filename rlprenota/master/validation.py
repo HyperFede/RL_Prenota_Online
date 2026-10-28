@@ -179,6 +179,10 @@ class SearchSettings:
                 name, prov = name.strip(), prov.strip().upper()
                 if not name or len(name) > 80 or (prov and prov not in PROVINCES):
                     raise ValidationError("facilities", f"Struttura non valida: {line.strip()[:40]}")
+                if not prov:
+                    # Only the facilities' provinces are searched on the portal: without it nothing would be
+                    raise ValidationError("facilities", f"Indica la provincia della struttura «{name[:40]}», "
+                                                        f"dopo una barra: {name[:40]} | MILANO CITTA'")
                 facilities.append({"name": name, "province": prov})
             if not facilities or len(facilities) > MAX_FACILITIES:
                 raise ValidationError("facilities", f"Indica da 1 a {MAX_FACILITIES} strutture (una per riga: nome | provincia)")

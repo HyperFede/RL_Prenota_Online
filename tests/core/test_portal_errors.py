@@ -224,3 +224,17 @@ def test_results_count_only_under_the_searched_province_heading(load_html):
     driver.execute_script("document.getElementById('zona').textContent = '3 Sedi in zona - MILANO CITTA\\'';")
     assert portal.check_search_outcome(driver, "MILANO CITTA'", timeout=1.5) == "RESULTS"
     assert portal.check_search_outcome(driver, "MILANO PROVINCIA", timeout=1.5) == "TIMEOUT"
+
+
+def test_a_search_with_no_province_to_check_tells_the_user():
+    # Saved before provinces were required: it must not keep reporting "nothing new" while checking nothing
+    prefs = SearchPreferences([], "", "", 60, location_mode="facilities",
+                              facilities=[{"name": "VILLA APRICA", "province": ""}])
+    session = SimpleNamespace(driver=None, ignored_exceptions=IGNORED, prefs=prefs, filter=prefs.build_filter(),
+                              before_search=None, open=mock.Mock())
+    session.provinces = session.filter.provinces_to_search
+    session.portal_hints = session.filter.portal_hints
+    with mock.patch.object(portal, "search_in_province") as search:
+        with pytest.raises(LoginRejected, match="provincia di ogni struttura"):
+            runner.run_cycle(session)
+    search.assert_not_called()
