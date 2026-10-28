@@ -46,7 +46,8 @@
     <div class="mode facilities">
       <label>Una struttura per riga: nome | provincia
         <textarea name="facilities" rows="4" placeholder="Niguarda | MILANO CITTA'&#10;Ospedale di Circolo | VARESE" {{ err('facilities') }}>{{ values.facilities or '' }}</textarea></label>
-      <p class="muted">Basta una parte del nome, così come appare sul portale («Presentarsi in» o «Azienda»).</p>
+      <p class="muted">Basta una parte del nome, così come appare sul portale («Presentarsi in» o «Azienda»).
+        La provincia è facoltativa, ma senza provincia la ricerca controlla tutte le 13 province ed è molto più lenta.</p>
     </div>
   </fieldset>
 
