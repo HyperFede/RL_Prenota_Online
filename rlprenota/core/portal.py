@@ -36,8 +36,13 @@ MODE_NEW = "nuova"            # no appointment yet: first-time booking
 # Matches "dd/mm/yyyy - HH:MM", "dd/mm/yyyy HH:MM", "dd/mm/yyyy alle HH:MM"...
 # Popup texts after login that really mean "the data entered is wrong" (lower case)
 # ("scaduta" alone is not enough: "la sessione è scaduta" is the portal's fault, not the user's)
-USER_DATA_MARKERS = ("ricetta", "prescrizione non", "codice fiscale", "tessera", "non valid", "non trovat", "erogat",
-                     "gia' prenotat", "già prenotat", "annullat", "inesistent")
+USER_DATA_MARKERS = ("ricetta non", "ricetta scadut", "prescrizione non", "codice fiscale", "tessera", "non valid",
+                     "non è valid", "non e' valid", "non trovat", "erogat", "gia' prenotat", "già prenotat", "annullat", "inesistent")
+
+# How the portal says a failure is its own and temporary (popup texts, lower case): checked before USER_DATA_MARKERS,
+# e.g. "Al momento non e' possibile identificare la ricetta, riprova piu' tardi"
+TRY_LATER_MARKERS = ("riprova piu' tardi", "riprova più tardi", "riprovare piu' tardi", "riprovare più tardi",
+                     "al momento non e' possibile", "al momento non è possibile")
 
 # How the portal says "nothing bookable online right now" (popup texts, lower case)
 NO_AVAILABILITY_MARKERS = ("non ci sono disponibilit", "nessuna disponibilit", "non sono state trovate disponibilit",
@@ -819,7 +824,10 @@ def detect_booking_mode(driver, timeout=45):
                     raise NoAvailability(" ".join(text.split())[:300])
                 if any("errore" in t or "attenzione" in t for t in titles):
                     message = " ".join(text.split())[:400]
-                    if any(marker in message.lower() for marker in USER_DATA_MARKERS):
+                    lowered = message.lower()
+                    if any(marker in lowered for marker in TRY_LATER_MARKERS):
+                        raise PortalHiccup(message)
+                    if any(marker in lowered for marker in USER_DATA_MARKERS):
                         raise LoginRejected(message)
                     raise PortalHiccup(message)   # e.g. session expired: not the user's fault, retry
                 if text not in reported_popups:
