@@ -68,6 +68,19 @@ def test_only_real_data_problems_after_login_blame_the_user(load_html):
         portal.detect_booking_mode(driver, timeout=2)
 
 
+def test_try_later_popup_mentioning_the_prescription_is_a_hiccup(load_html):
+    """Production, 00:05: the portal could not look up any prescription for a while. Retry, never pause."""
+    from rlprenota.core.errors import PortalHiccup
+    driver = load_html('<div class="modal-dialog"><span class="modal-title">Attenzione</span>'
+                       "Al momento non e' possibile identificare la ricetta, riprova piu' tardi.</div>")
+    with pytest.raises(PortalHiccup):
+        portal.detect_booking_mode(driver, timeout=2)
+    driver = load_html('<div class="modal-dialog"><span class="modal-title">Errore</span>'
+                       'Ricetta già erogata</div>')
+    with pytest.raises(LoginRejected):
+        portal.detect_booking_mode(driver, timeout=2)
+
+
 def test_search_applies_portal_hints_and_submits(load_html):
     driver = load_html(SEARCH_FORM)
     hints = PortalHints(weekdays={0, 1, 2, 3, 4}, morning=True, afternoon=False)
