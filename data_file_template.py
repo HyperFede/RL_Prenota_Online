@@ -24,6 +24,8 @@ strutture = [                            # per "facilities": nome (anche parzial
 giorni_settimana = None                  # es. {0, 1, 2, 3, 4} = da lunedì a venerdì; None = tutti
 orario_da = None                         # es. "08:00"; None = nessun limite
 orario_a = None                          # es. "12:30"
+direzione = "anticipa"                   # rispetto all'appuntamento già prenotato: "anticipa" (date precedenti),
+                                         # "posticipa" (date successive, fino a end_date o un mese dopo) o "entrambe"
 
 ### SOLO PER UNA PRIMA PRENOTAZIONE ###
 # Se la ricetta non ha ancora un appuntamento il programma lo rileva da solo e cerca una prima data.

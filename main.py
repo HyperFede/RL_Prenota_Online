@@ -98,7 +98,8 @@ def get_data_from_file():
                                            facilities=getattr(data_file, 'strutture', []),
                                            weekdays=getattr(data_file, 'giorni_settimana', None),
                                            time_from=getattr(data_file, 'orario_da', None),
-                                           time_to=getattr(data_file, 'orario_a', None))
+                                           time_to=getattr(data_file, 'orario_a', None),
+                                           direzione=getattr(data_file, 'direzione', None))
 
     return prescription, search_preferences
 
